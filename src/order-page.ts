@@ -9,7 +9,8 @@ interface View {
   customer_name: string;
   phone: string;
   delivery_label: string;
-  address: string;
+  address: string | null;
+  map_url: string | null;
   notes: string | null;
   items: { product_name: string; qty: number; unit_price: string }[];
   total_mvr: string;
@@ -92,7 +93,9 @@ function paint() {
         <tr class="total"><td>Total</td><td>${mvr(v.total_mvr)}</td></tr>
       </table>
       <p style="margin-top:var(--space-4)"><b>Delivery:</b> ${v.delivery_label}<br>
-        <b>To:</b> ${v.customer_name}, ${v.phone}<br>${v.address}</p>
+        <b>To:</b> ${v.customer_name}, ${v.phone}
+        ${v.map_url ? html`<br><a href="${v.map_url}" target="_blank" rel="noopener">📍 Your delivery pin</a>` : ""}
+        ${v.address ? html`<br>${v.address}` : ""}</p>
       ${v.notes ? html`<p class="small muted">Notes: ${v.notes}</p>` : ""}
     </div>
 

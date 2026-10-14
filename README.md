@@ -24,8 +24,9 @@ The browser never touches tables: everything goes through the `store` function.
 
 ## How an order flows
 
-1. `/` → `create-order`. The server re-prices from `store.products`, checks the 20:00 Malé cutoff and the daily
-   capacity (locked per date), and returns the order ID (`AB-7K4Q`) and the status token.
+1. `/` → `create-order`. The customer drops a pin on the map (street or satellite; their own location shows as a
+   blue dot) and may add directions. The server re-prices from `store.products`, checks the 20:00 Malé cutoff, the
+   7-day booking window, off days and the daily capacity (locked per date), and returns the order ID (`AB-7K4Q`) and the status token.
 2. `/order/?t=…` shows the bank details. The customer transfers, uploads a screenshot (compressed to 1600 px in
    the browser), and OCR (Tesseract, loaded only then) fills in the BML reference. The customer checks it and sends.
 3. The server claims the reference on the ledger for **our own order total**, then posts the slip to the
@@ -54,6 +55,9 @@ permanent copy: search the order ID in the slips group.
   - **Reject order** (fake orders)
   - **Clear review flag** (after you've refunded an overpayment, etc.)
 - **Production**: buns per product for a date: paid / checking with the bank / not paid yet.
+- **Days**: the next 14 days; make any of them an off day (customers can only order 7 days ahead, so you have a week
+  to plan). Orders already placed for a day you close stay; cancel them if needed.
+- Each order shows **📍 Open pin in Google Maps**; the slips Telegram caption has the same link.
 - **Customers**: phone, name, paid orders, buns bought, last order. Managers only.
 - **Products**: name, price, description, on sale, order, photo (public `products` bucket).
 

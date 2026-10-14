@@ -92,7 +92,7 @@ addEventListener("popstate", () => route());
 function shell(tab: string, body: Raw) {
   render(app, html`
     <nav class="tabs">
-      ${[["orders", "Orders"], ["production", "Production"], ["customers", "Customers"], ["products", "Products"]].map(([k, l]) =>
+      ${[["orders", "Orders"], ["production", "Production"], ["days", "Days"], ["customers", "Customers"], ["products", "Products"]].map(([k, l]) =>
         html`<button class="${tab === k ? "on" : ""}" data-tab="${k}">${l}</button>`)}
       <button class="secondary" id="out" style="margin-left:auto">Sign out</button>
     </nav>
@@ -108,6 +108,7 @@ async function route() {
     if (p.get("order")) return await orderDetail(p.get("order")!);
     switch (p.get("tab")) {
       case "production": return await production(p.get("date") ?? "");
+      case "days": return await days();
       case "customers": return await customers(p.get("sort") ?? "buns");
       case "products": return await products();
       default: return await orders(p);
@@ -177,7 +178,8 @@ async function orderDetail(id: string) {
     </div>
     <div class="card">
       <h2>Customer</h2>
-      <p>${o.customer_name} · <a href="tel:${o.phone}">${o.phone}</a><br>${o.address}</p>
+      <p>${o.customer_name} · <a href="tel:${o.phone}">${o.phone}</a>${o.address ? html`<br>${o.address}` : ""}</p>
+      ${o.map_url ? html`<p><a class="btn" href="${o.map_url}" target="_blank" rel="noopener">📍 Open pin in Google Maps</a></p>` : ""}
       ${o.notes ? html`<p class="muted">Notes: ${o.notes}</p>` : ""}
       <p class="small">Delivery <b>${o.delivery_date}</b> · ${copyBtn(o.status_url, "Copy customer's order link")}</p>
     </div>
@@ -253,6 +255,34 @@ async function production(date: string) {
     </table>
     <p class="small muted" style="margin-top:var(--space-3)">Paid = paid or delivered. Checking = waiting for the bank. Cancelled and rejected orders are left out.</p>`);
   $<HTMLInputElement>("#d").onchange = (e) => go({ tab: "production", date: (e.target as HTMLInputElement).value });
+}
+
+async function days() {
+  const r = await call("/admin/days");
+  shell("days", html`
+    <p class="muted">Customers can order up to 7 days ahead. Close a day here and nobody can order for it.
+      Orders already placed for a day you close stay; cancel them from Orders if needed.</p>
+    <table class="list">
+      <tr><th>Day</th><th>Booked</th><th></th></tr>
+      ${r.days.map((d: { date: string; label: string; off: boolean; booked: number }) => html`
+        <tr><td><b>${d.label}</b> ${d.off ? html`<span class="chip cancelled">off day</span>` : ""}</td>
+          <td>${d.booked ? `${d.booked} bun${d.booked > 1 ? "s" : ""}` : html`<span class="muted">–</span>`}</td>
+          <td style="text-align:right"><button class="${d.off ? "" : "secondary"}" data-day="${d.date}" data-off="${String(!d.off)}">${d.off ? "Open again" : "Make off day"}</button></td></tr>`)}
+    </table>
+    <div id="day-err"></div>`);
+  app.querySelectorAll<HTMLButtonElement>("[data-day]").forEach((b) => (b.onclick = async () => {
+    const off = b.dataset.off === "true";
+    const row = r.days.find((d: { date: string }) => d.date === b.dataset.day);
+    if (off && row.booked && !confirm(`${row.label} already has ${row.booked} buns ordered. Close it anyway?`)) return;
+    b.disabled = true;
+    try {
+      await call("/admin/day", { date: b.dataset.day, off });
+      await days();
+    } catch (e) {
+      render($("#day-err"), html`<div class="notice bad" style="margin-top:var(--space-3)">${(e as Error).message}</div>`);
+      b.disabled = false;
+    }
+  }));
 }
 
 async function customers(sort: string) {

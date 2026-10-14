@@ -1,14 +1,16 @@
 // "/" — pick buns, a day, and details; the server re-prices everything.
 import { $, api, html, mvr, render, store } from "./lib.ts";
+import { type Pin, pinPicker } from "./map.ts";
 
 interface Product { id: string; name: string; description: string | null; price_mvr: string; image_url: string | null }
-interface DeliveryDate { date: string; label: string; available: boolean; left: number }
+interface DeliveryDate { date: string; label: string; available: boolean; closed: boolean; left: number }
 
 const MAX_PER_LINE = 50, MAX_BUNS = 100;
 const app = $("#app");
 const qty = new Map<string, number>();
 let products: Product[] = [];
 let dates: DeliveryDate[] = [];
+let pin: Pin | null = null;
 
 async function load() {
   try {
@@ -17,8 +19,9 @@ async function load() {
     render(app, html`<div class="notice bad">${(e as Error).message}</div><button onclick="location.reload()">Try again</button>`);
     return;
   }
-  const saved = store<{ name: string; phone: string; address: string }>("alinabun.customer");
+  const saved = store<{ name: string; phone: string; address: string; pin?: Pin }>("alinabun.customer");
   const firstOpen = dates.find((d) => d.available)?.date;
+  pin = saved?.pin ?? null;
   render(app, html`
     <form id="f" novalidate>
       ${products.map((p) => html`
@@ -41,7 +44,7 @@ async function load() {
         <div class="dates" role="radiogroup" aria-label="Delivery day">
           ${dates.map((d) => html`
             <label><input type="radio" name="delivery_date" value="${d.date}" ${d.available ? "" : "disabled"} ${d.date === firstOpen ? "checked" : ""}>
-              <span>${d.label}${d.available ? "" : html`<small>Sold out</small>`}</span></label>`)}
+              <span>${d.label}${d.available ? "" : html`<small>${d.closed ? "Closed" : "Sold out"}</small>`}</span></label>`)}
         </div>
 
         <label for="name">Your name</label>
@@ -51,8 +54,13 @@ async function load() {
         <input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="7xx xxxx" value="${saved?.phone ?? ""}" required>
         <div class="hint">A Maldives mobile number, so we can call you about the delivery.</div>
 
-        <label for="address">Delivery address</label>
-        <textarea id="address" name="address" autocomplete="street-address" maxlength="500" placeholder="House name, road, floor" required>${saved?.address ?? ""}</textarea>
+        <label>Where should we deliver?</label>
+        <p class="hint">Tap the map to put a pin on your home. Drag the pin to move it. The blue dot is where you are now.</p>
+        <div id="map" class="map" aria-label="Map: tap to put your delivery pin"></div>
+        <div class="hint" id="pin-status">${saved?.pin ? "Pin from your last order. Move it if you're somewhere else." : "No pin yet."}</div>
+
+        <label for="address">Directions <span class="muted">(optional)</span></label>
+        <textarea id="address" name="address" maxlength="500" placeholder="House name, floor, door colour, what's nearby">${saved?.address ?? ""}</textarea>
 
         <label for="notes">Notes <span class="muted">(optional)</span></label>
         <textarea id="notes" name="notes" maxlength="500" placeholder="Anything we should know?"></textarea>
@@ -77,6 +85,11 @@ async function load() {
     $(`#q-${id}`).textContent = String(next);
     update();
   });
+  pinPicker($("#map"), saved?.pin ?? null, (p) => {
+    pin = { lat: p.lat, lng: p.lng };
+    $("#pin-status").textContent = "📍 Pin placed. We'll call you when we're close.";
+    showError("");
+  }).catch(() => render($("#map"), html`<div class="notice bad">The map didn't load. Please check your internet and refresh the page.</div>`));
   $("#go").onclick = () => $("#submit").scrollIntoView({ behavior: "smooth", block: "center" });
   $<HTMLFormElement>("#f").onsubmit = submit;
 }
@@ -109,16 +122,19 @@ async function submit(e: SubmitEvent) {
   if (buns > date.left) return showError(`Only ${date.left} buns are left for ${date.label}. Please order fewer or pick another day.`);
   if (!get("name")) return showError("Please fill in your name.");
   if (!get("phone")) return showError("Please fill in your phone number.");
-  if (get("address").length < 5) return showError("Please fill in your delivery address.");
+  if (!pin) {
+    $("#map").scrollIntoView({ behavior: "smooth", block: "center" });
+    return showError("Please tap the map to show us where to deliver.");
+  }
 
   const btn = $<HTMLButtonElement>("#submit");
   btn.disabled = true;
   btn.textContent = "Placing your order…";
   try {
     const r = await api<{ status_token: string }>("/create-order", {
-      body: { name: get("name"), phone: get("phone"), address: get("address"), notes: get("notes") || null, delivery_date: date.date, items },
+      body: { name: get("name"), phone: get("phone"), lat: pin.lat, lng: pin.lng, address: get("address") || null, notes: get("notes") || null, delivery_date: date.date, items },
     });
-    store("alinabun.customer", { name: get("name"), phone: get("phone"), address: get("address") });
+    store("alinabun.customer", { name: get("name"), phone: get("phone"), address: get("address"), pin });
     location.href = `/order/?t=${encodeURIComponent(r.status_token)}`;
   } catch (err) {
     showError((err as Error).message);

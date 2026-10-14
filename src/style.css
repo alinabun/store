@@ -78,8 +78,13 @@ textarea { min-height: 80px; resize: vertical; }
 .dates input:checked + span small { color: var(--warm-glaze); }
 .dates input:focus-visible + span { outline: 3px solid var(--accent); outline-offset: 2px; }
 .dates input:disabled + span { opacity: .45; cursor: default; text-decoration: line-through; }
+/* isolation keeps Leaflet's z-indexes inside the map, under the sticky bar. */
+.map { height: 320px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong); isolation: isolate; }
+/* Undo the form styles inside Leaflet's Map/Satellite switch. */
+.map .leaflet-control-layers label { display: block; margin: 0; font-weight: 500; }
+.map .leaflet-control-layers input { width: auto; padding: 0; margin: 0 4px 0 0; }
 .bar {
-  position: fixed; left: 0; right: 0; bottom: 0; background: var(--bg-inverse); color: var(--text-inverse);
+  z-index: 10; position: fixed; left: 0; right: 0; bottom: 0; background: var(--bg-inverse); color: var(--text-inverse);
   padding: var(--space-3) var(--space-4) calc(var(--space-3) + env(safe-area-inset-bottom));
 }
 .bar .wrap { padding: 0; display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); }
