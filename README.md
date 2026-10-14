@@ -55,8 +55,8 @@ permanent copy: search the order ID in the slips group.
   - **Reject order** (fake orders)
   - **Clear review flag** (after you've refunded an overpayment, etc.)
 - **Production**: buns per product for a date: paid / checking with the bank / not paid yet.
-- **Days**: the next 14 days; make any of them an off day (customers can only order 7 days ahead, so you have a week
-  to plan). Orders already placed for a day you close stay; cancel them if needed.
+- **Days**: weekly off days (Fri + Sat to start; a change starts 8 days out, after the days customers can already
+  book) and one-time off days for any of the next 14 days. Orders already placed for a day you close stay; cancel them if needed.
 - Each order shows **📍 Open pin in Google Maps**; the slips Telegram caption has the same link.
 - **Customers**: phone, name, paid orders, buns bought, last order. Managers only.
 - **Products**: name, price, description, on sale, order, photo (public `products` bucket).

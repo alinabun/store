@@ -257,29 +257,56 @@ async function production(date: string) {
   $<HTMLInputElement>("#d").onchange = (e) => go({ tab: "production", date: (e.target as HTMLInputElement).value });
 }
 
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const dayNames = (w: number[]) => w.length ? w.map((d) => WEEKDAYS[d]).join(", ") : "none";
+
 async function days() {
+  type Day = { date: string; label: string; off: "weekly" | "one_time" | null; booked: number };
   const r = await call("/admin/days");
+  const [now, ...later] = r.weekly as { from: string; label: string; weekdays: number[] }[];
+  const editing = (later.at(-1) ?? now).weekdays;
   shell("days", html`
-    <p class="muted">Customers can order up to 7 days ahead. Close a day here and nobody can order for it.
+    <div class="card">
+      <h2>Weekly off days</h2>
+      <p>Now: <b>${dayNames(now.weekdays)}</b>
+        ${later.map((w) => html`<br>From ${w.label}: <b>${dayNames(w.weekdays)}</b>`)}</p>
+      <div class="row" style="flex-wrap:wrap">
+        ${WEEKDAYS.map((n, i) => html`<label class="row" style="margin:0;font-weight:500"><input type="checkbox" name="wd" value="${i}" style="width:auto" ${editing.includes(i) ? "checked" : ""}> ${n}</label>`)}
+        <button id="save-weekly">Save</button>
+      </div>
+      <p class="hint">A change starts on ${r.change_label}, after the days customers can already book.</p>
+    </div>
+    <p class="muted">Customers can order up to 7 days ahead. Make a one-time off day for any day below.
       Orders already placed for a day you close stay; cancel them from Orders if needed.</p>
     <table class="list">
       <tr><th>Day</th><th>Booked</th><th></th></tr>
-      ${r.days.map((d: { date: string; label: string; off: boolean; booked: number }) => html`
-        <tr><td><b>${d.label}</b> ${d.off ? html`<span class="chip cancelled">off day</span>` : ""}</td>
+      ${r.days.map((d: Day) => html`
+        <tr><td><b>${d.label}</b> ${d.off === "weekly" ? html`<span class="chip">weekly off</span>` : d.off ? html`<span class="chip cancelled">off day</span>` : ""}</td>
           <td>${d.booked ? `${d.booked} bun${d.booked > 1 ? "s" : ""}` : html`<span class="muted">–</span>`}</td>
-          <td style="text-align:right"><button class="${d.off ? "" : "secondary"}" data-day="${d.date}" data-off="${String(!d.off)}">${d.off ? "Open again" : "Make off day"}</button></td></tr>`)}
+          <td style="text-align:right">${d.off === "weekly" ? "" : html`<button class="${d.off ? "" : "secondary"}" data-day="${d.date}" data-off="${String(!d.off)}">${d.off ? "Open again" : "Make off day"}</button>`}</td></tr>`)}
     </table>
     <div id="day-err"></div>`);
+  const fail = (e: unknown) => render($("#day-err"), html`<div class="notice bad" style="margin-top:var(--space-3)">${(e as Error).message}</div>`);
+  $("#save-weekly").onclick = async () => {
+    const weekdays = [...app.querySelectorAll<HTMLInputElement>("input[name=wd]:checked")].map((c) => Number(c.value));
+    if (!confirm(`Weekly off days from ${r.change_label}: ${dayNames(weekdays)}?`)) return;
+    try {
+      await call("/admin/weekly", { weekdays });
+      await days();
+    } catch (e) {
+      fail(e);
+    }
+  };
   app.querySelectorAll<HTMLButtonElement>("[data-day]").forEach((b) => (b.onclick = async () => {
     const off = b.dataset.off === "true";
-    const row = r.days.find((d: { date: string }) => d.date === b.dataset.day);
+    const row = r.days.find((d: Day) => d.date === b.dataset.day);
     if (off && row.booked && !confirm(`${row.label} already has ${row.booked} buns ordered. Close it anyway?`)) return;
     b.disabled = true;
     try {
       await call("/admin/day", { date: b.dataset.day, off });
       await days();
     } catch (e) {
-      render($("#day-err"), html`<div class="notice bad" style="margin-top:var(--space-3)">${(e as Error).message}</div>`);
+      fail(e);
       b.disabled = false;
     }
   }));
