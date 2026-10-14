@@ -1,0 +1,54 @@
+/* Alina Bun — brand tokens
+   Single source of truth for colour, type and spacing.
+   Extracted from the bakery reference boards. Copy this file
+   into any alinabun.* repo; do not redefine these values locally. */
+
+:root {
+  /* ---- Core palette ---- */
+  --milk-bun:      #F4EEE1;  /* background            */
+  --warm-glaze:    #D9C1A0;  /* surfaces / cards      */
+  --golden-crust:  #BD8145;  /* primary / CTA         */
+  --toasted-crumb: #8C6A4B;  /* secondary / muted text*/
+  --dark-roast:    #3B2417;  /* text / dark surfaces  */
+  --white:         #FFFFFF;
+
+  /* ---- Semantic aliases (prefer these in components) ---- */
+  --bg:            var(--milk-bun);
+  --bg-raised:     var(--white);
+  --bg-inverse:    var(--dark-roast);
+  --surface:       var(--warm-glaze);
+  --text:          var(--dark-roast);
+  --text-muted:    var(--toasted-crumb);
+  --text-inverse:  var(--milk-bun);
+  --accent:        var(--golden-crust);
+  --accent-text:   var(--white);
+  --border:        rgba(59, 36, 23, 0.08);
+  --border-strong: rgba(59, 36, 23, 0.16);
+
+  /* ---- Type ---- */
+  --font-display: 'Fraunces', Georgia, 'Times New Roman', serif;
+  --font-body:    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono:    ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* ---- Radii & shadow ---- */
+  --radius-sm:  9px;
+  --radius-md:  14px;
+  --radius-lg:  20px;
+  --radius-pill: 999px;
+  --shadow-sm: 0 1px 2px rgba(59,36,23,.06);
+  --shadow-md: 0 4px 16px rgba(59,36,23,.08);
+  --shadow-lg: 0 12px 32px rgba(59,36,23,.14);
+
+  /* ---- Spacing scale ---- */
+  --space-1: 4px;   --space-2: 8px;   --space-3: 12px;
+  --space-4: 16px;  --space-5: 24px;  --space-6: 32px;
+  --space-7: 48px;  --space-8: 64px;  --space-9: 96px;
+}
+
+/* Contrast notes — do not pair outside these:
+   dark-roast on milk-bun ......... 12.5:1  body text OK
+   milk-bun on dark-roast ......... 12.5:1  body text OK
+   dark-roast on warm-glaze ........ 8.3:1  body text OK
+   white on toasted-crumb .......... 4.9:1  body text OK
+   white on golden-crust ........... 3.3:1  LARGE TEXT / BUTTONS ONLY
+   golden-crust on milk-bun ........ 3.1:1  LARGE TEXT ONLY          */
