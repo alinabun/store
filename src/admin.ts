@@ -449,8 +449,7 @@ async function invoiceView(number: string) {
         ${v.qr ? html`<div class="paymv">${raw(qrSvg(v.qr))}<div class="small">Scan to pay ${mvr(v.totals.due)}</div></div>` : ""}
         <p class="small grow" style="margin:0"><b>Please pay by bank transfer</b><br>
           ${v.qr ? "Scan the QR code with your bank app (PayMV), or transfer to:" : ""}<br>
-          ${v.bank.bank} · ${v.bank.account_name} · ${v.bank.account_number}<br>
-          Please write <b>${v.number}</b> in the transfer remarks.</p>
+          ${v.bank.bank} · ${v.bank.account_name} · ${v.bank.account_number}</p>
       </div>
     </div>`);
   $("#back").onclick = () => go({ tab: "invoices" });

@@ -61,7 +61,7 @@ permanent copy: search the order ID in the slips group.
 - **Invoices**: invoices for buns placed in shops. Pick the shop and invoice date, enter buns sold and free (tasting)
   per bun, the shop price and the shop's profit per bun sold (default MVR 5). The shop owes (price − profit) × sold.
   Print or save as PDF, then mark paid (or void with a reason). Unpaid invoices show a PayMV QR code: the shop scans it
-  in any Maldives bank app and the account and amount are filled in (the invoice number is not, so it's printed for the remarks).
+  in any Maldives bank app with the account and amount filled in, then sends you the payslip.
 - **Customers**: phone, name, paid orders, buns bought, last order. Managers only.
 - **Products**: name, price, description, on sale, order, photo (public `products` bucket).
 
