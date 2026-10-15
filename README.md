@@ -58,6 +58,9 @@ permanent copy: search the order ID in the slips group.
 - **Days**: weekly off days (Fri + Sat to start; a change starts 8 days out, after the days customers can already
   book) and one-time off days for any of the next 14 days. Orders already placed for a day you close stay; cancel them if needed.
 - Each order shows **📍 Open pin in Google Maps**; the slips Telegram caption has the same link.
+- **Invoices**: invoices for buns placed in shops. Pick the shop and invoice date, enter buns sold and free (tasting)
+  per bun, the shop price and the shop's profit per bun sold (default MVR 5). The shop owes (price − profit) × sold.
+  Print or save as PDF, then mark paid (or void with a reason).
 - **Customers**: phone, name, paid orders, buns bought, last order. Managers only.
 - **Products**: name, price, description, on sale, order, photo (public `products` bucket).
 

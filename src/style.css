@@ -117,7 +117,7 @@ textarea { min-height: 80px; resize: vertical; }
 .slip-preview { max-width: 120px; max-height: 200px; border-radius: var(--radius-sm); border: 1px solid var(--border); }
 .items { width: 100%; border-collapse: collapse; }
 .items td { padding: 6px 0; border-bottom: 1px solid var(--border); }
-.items td:last-child { text-align: right; }
+.items td:last-child { text-align: right; white-space: nowrap; padding-left: var(--space-3); }
 .items tr.total td { font-weight: 700; border-bottom: 0; }
 
 /* Admin */
@@ -139,3 +139,11 @@ table.list tr[data-id]:hover { background: var(--bg); }
 .actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .scroll { overflow-x: auto; }
 pre { white-space: pre-wrap; word-break: break-all; font-size: .8rem; background: var(--bg); padding: var(--space-2); border-radius: var(--radius-sm); }
+
+/* Printing an invoice: only the invoice itself. */
+@media print {
+  header.top, nav.tabs, .no-print { display: none !important; }
+  body { background: #fff; }
+  .wrap { padding: 0; max-width: none; }
+  .card.invoice { border: 0; box-shadow: none; padding: 0; }
+}

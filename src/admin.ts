@@ -92,7 +92,7 @@ addEventListener("popstate", () => route());
 function shell(tab: string, body: Raw) {
   render(app, html`
     <nav class="tabs">
-      ${[["orders", "Orders"], ["production", "Production"], ["days", "Days"], ["customers", "Customers"], ["products", "Products"]].map(([k, l]) =>
+      ${[["orders", "Orders"], ["production", "Production"], ["days", "Days"], ["invoices", "Invoices"], ["customers", "Customers"], ["products", "Products"]].map(([k, l]) =>
         html`<button class="${tab === k ? "on" : ""}" data-tab="${k}">${l}</button>`)}
       <button class="secondary" id="out" style="margin-left:auto">Sign out</button>
     </nav>
@@ -106,9 +106,11 @@ async function route() {
   const p = params();
   try {
     if (p.get("order")) return await orderDetail(p.get("order")!);
+    if (p.get("invoice")) return await invoiceView(p.get("invoice")!);
     switch (p.get("tab")) {
       case "production": return await production(p.get("date") ?? "");
       case "days": return await days();
+      case "invoices": return p.get("new") ? await newInvoice() : await invoices();
       case "customers": return await customers(p.get("sort") ?? "buns");
       case "products": return await products();
       default: return await orders(p);
@@ -310,6 +312,151 @@ async function days() {
       b.disabled = false;
     }
   }));
+}
+
+// ── Shop invoices ──
+
+const laari = (s: string) => Math.round(Number(s) * 100);
+const INV_CHIP: Record<string, string> = { unpaid: "awaiting_bank", paid: "paid", void: "cancelled" };
+
+async function invoices() {
+  const r = await call("/admin/invoices");
+  shell("invoices", html`
+    <div class="row between" style="margin-bottom:var(--space-4)">
+      <p class="muted" style="margin:0">Invoices for buns placed in shops. The shop pays for what it sold, minus its profit per bun.</p>
+      <button id="new-inv">New invoice</button>
+    </div>
+    <div class="scroll"><table class="list">
+      <tr><th>Invoice</th><th>Date</th><th>Shop</th><th>Amount due</th><th>Status</th></tr>
+      ${r.invoices.map((i: Record<string, string>) => html`
+        <tr data-inv="${i.number}"><td><b>${i.number}</b></td><td>${i.invoice_date}</td><td>${i.shop_name}</td>
+          <td>${mvr(i.due_mvr)}</td><td><span class="chip ${INV_CHIP[i.status]}">${i.status}</span></td></tr>`)}
+    </table></div>
+    ${r.invoices.length ? "" : html`<p class="muted">No invoices yet.</p>`}`);
+  $("#new-inv").onclick = () => go({ tab: "invoices", new: "1" });
+  app.querySelectorAll<HTMLElement>("tr[data-inv]").forEach((tr) => (tr.onclick = () => go({ invoice: tr.dataset.inv! })));
+}
+
+async function newInvoice() {
+  const [{ products }, { shops }] = await Promise.all([call("/admin/products"), call("/admin/invoices")]);
+  type P = { id: string; name: string; price_mvr: string; active: boolean };
+  const list = (products as P[]).filter((p) => p.active);
+  const today = new Date(Date.now() + 5 * 3600_000).toISOString().slice(0, 10);
+  shell("invoices", html`
+    <button class="secondary" id="back">← Invoices</button>
+    <form class="card" id="inv" style="margin-top:var(--space-4)">
+      <h1>New shop invoice</h1>
+      <div class="filters">
+        <label>Shop<input name="shop_name" list="shops" required maxlength="100" placeholder="Shop name"></label>
+        <label>Invoice date<input name="invoice_date" type="date" required value="${today}"></label>
+        <label>Shop's profit per bun sold (MVR)<input name="margin" inputmode="decimal" value="5"></label>
+      </div>
+      <datalist id="shops">${(shops as string[]).map((s) => html`<option value="${s}">`)}</datalist>
+      <div class="scroll"><table class="list" style="margin-top:var(--space-4)">
+        <tr><th>Bun</th><th>Price (MVR)</th><th>Sold</th><th>Free</th></tr>
+        ${list.map((p) => html`<tr data-p="${p.id}"><td>${p.name}</td>
+          <td><input name="price" inputmode="decimal" value="${p.price_mvr}" style="max-width:90px"></td>
+          <td><input name="sold" type="number" min="0" step="1" value="0" style="max-width:80px"></td>
+          <td><input name="free" type="number" min="0" step="1" value="0" style="max-width:80px"></td></tr>`)}
+      </table></div>
+      <p class="hint">Free = given away for tasting or testing; listed on the invoice at no charge.</p>
+      <label>Notes <span class="muted">(optional, printed on the invoice)</span><textarea name="notes" maxlength="500"></textarea></label>
+      <div class="notice info" id="sum" style="margin-top:var(--space-4)"></div>
+      <div id="inv-err"></div>
+      <button class="primary">Create invoice</button>
+    </form>`);
+  $("#back").onclick = () => go({ tab: "invoices" });
+  const f = $<HTMLFormElement>("#inv");
+  const read = () => [...f.querySelectorAll<HTMLTableRowElement>("tr[data-p]")].map((tr) => ({
+    product_id: tr.dataset.p!,
+    unit_price: tr.querySelector<HTMLInputElement>("[name=price]")!.value.trim(),
+    sold: Number(tr.querySelector<HTMLInputElement>("[name=sold]")!.value || 0),
+    free: Number(tr.querySelector<HTMLInputElement>("[name=free]")!.value || 0),
+  }));
+  const sum = () => {
+    const m = laari(f.margin.value || "0");
+    let sold = 0, free = 0, sales = 0, due = 0;
+    for (const l of read()) {
+      sold += l.sold; free += l.free;
+      sales += laari(l.unit_price) * l.sold; due += (laari(l.unit_price) - m) * l.sold;
+    }
+    render($("#sum"), html`${sold} sold, ${free} free · Sales ${mvr(sales / 100)} · Shop keeps ${mvr((sales - due) / 100)} · <b>Shop pays us ${mvr(due / 100)}</b>`);
+  };
+  f.addEventListener("input", sum);
+  sum();
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    const btn = f.querySelector<HTMLButtonElement>("button.primary")!;
+    btn.disabled = true;
+    try {
+      const r = await call("/admin/invoice", {
+        shop_name: f.shop_name.value, invoice_date: f.invoice_date.value, shop_margin_mvr: f.margin.value,
+        notes: f.notes.value || null, lines: read().filter((l) => l.sold + l.free > 0),
+      });
+      go({ invoice: r.number });
+    } catch (err) {
+      render($("#inv-err"), html`<div class="notice bad">${(err as Error).message}</div>`);
+      btn.disabled = false;
+    }
+  };
+}
+
+async function invoiceView(number: string) {
+  const v = await call(`/admin/invoice?id=${encodeURIComponent(number)}`);
+  const fmtDate = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC", day: "numeric", month: "long", year: "numeric" });
+  const margin = laari(v.shop_margin_mvr);
+  shell("invoices", html`
+    <div class="row no-print" style="flex-wrap:wrap;margin-bottom:var(--space-4)">
+      <button class="secondary" id="back">← Invoices</button>
+      <button id="print">Print / save as PDF</button>
+      ${v.status === "unpaid" ? html`<button class="secondary" id="paid">Mark paid</button><button class="secondary" id="void">Void</button>` : ""}
+    </div>
+    <div id="inv-err" class="no-print"></div>
+    ${v.status !== "unpaid" ? html`<div class="notice ${v.status === "paid" ? "ok" : "bad"} no-print"><b>${v.status === "paid" ? "Paid" : "Void"}</b>
+      ${v.status_at ? ` · ${when(v.status_at)}` : ""}${v.status_note ? ` · ${v.status_note}` : ""}</div>` : ""}
+    <div class="card invoice">
+      <div class="row between" style="align-items:flex-start;flex-wrap:wrap">
+        <div><h1 style="margin:0">Alina Bun</h1><div class="muted small">Instagram @alina.bun_</div></div>
+        <div style="text-align:right"><h2 style="margin:0">Invoice ${v.number}</h2><div>${fmtDate(v.invoice_date)}</div></div>
+      </div>
+      <p style="margin-top:var(--space-5)"><span class="muted">To</span><br><b>${v.shop_name}</b></p>
+      <div class="scroll"><table class="list">
+        <tr><th>Bun</th><th>Sold</th><th>Price</th><th>Shop keeps</th><th style="text-align:right">Amount</th></tr>
+        ${v.lines.filter((l: { sold: number }) => l.sold).map((l: { product_name: string; sold: number; unit_price: string }) => html`<tr>
+          <td>${l.product_name}</td><td>${l.sold}</td><td>${mvr(l.unit_price)}</td><td>${mvr(v.shop_margin_mvr)}</td>
+          <td style="text-align:right">${mvr((laari(l.unit_price) - margin) * l.sold / 100)}</td></tr>`)}
+        ${v.lines.filter((l: { free: number }) => l.free).map((l: { product_name: string; free: number }) => html`<tr>
+          <td>${l.product_name} <span class="muted">(free, tasting)</span></td><td>${l.free}</td><td>–</td><td>–</td><td style="text-align:right">${mvr(0)}</td></tr>`)}
+      </table></div>
+      <table class="items" style="margin-top:var(--space-4);max-width:340px;margin-left:auto">
+        <tr><td>Buns sold</td><td>${v.totals.sold}</td></tr>
+        ${v.totals.free ? html`<tr><td>Free buns</td><td>${v.totals.free}</td></tr>` : ""}
+        <tr><td>Sales</td><td>${mvr(v.totals.sales)}</td></tr>
+        <tr><td>Shop's profit (${mvr(v.shop_margin_mvr)} per bun sold)</td><td>− ${mvr(v.totals.shop_share)}</td></tr>
+        <tr class="total"><td>Amount due</td><td>${mvr(v.totals.due)}</td></tr>
+      </table>
+      ${v.notes ? html`<p style="margin-top:var(--space-4)">${v.notes}</p>` : ""}
+      <p class="small" style="margin-top:var(--space-5)"><b>Please pay by bank transfer</b><br>
+        ${v.bank.bank} · ${v.bank.account_name} · ${v.bank.account_number}<br>Reference: ${v.number}</p>
+    </div>`);
+  $("#back").onclick = () => go({ tab: "invoices" });
+  $("#print").onclick = () => print();
+  const act = async (action: string, note: string | null) => {
+    try {
+      await call("/admin/invoice-action", { id: v.number, action, note });
+      await invoiceView(v.number);
+    } catch (e) {
+      render($("#inv-err"), html`<div class="notice bad">${(e as Error).message}</div>`);
+    }
+  };
+  $("#paid")?.addEventListener("click", () => {
+    const note = prompt(`Mark ${v.number} paid (${mvr(v.totals.due)}). Note (optional, e.g. "BML transfer" or "cash"):`);
+    if (note !== null) act("mark_paid", note.trim() || null);
+  });
+  $("#void")?.addEventListener("click", () => {
+    const note = prompt(`Void ${v.number}? Reason:`);
+    if (note?.trim()) act("void", note.trim());
+  });
 }
 
 async function customers(sort: string) {
