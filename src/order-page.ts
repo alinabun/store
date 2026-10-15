@@ -2,6 +2,7 @@
 import { compressImage, readText, uploadTo } from "./image.ts";
 import { $, api, copyBtn, html, INSTAGRAM, mvr, raw, type Raw, render } from "./lib.ts";
 import { parseSlip, type Slip } from "./parse.ts";
+import { qrPngUrl, qrSvg } from "./qr.ts";
 
 interface View {
   public_id: string;
@@ -19,6 +20,7 @@ interface View {
   checking_by_hand: boolean;
   on_hold: boolean;
   bank: { bank: string; account_name: string; account_number: string } | null;
+  qr: string | null;
   paid_amount: string | null;
   overpaid_mvr: string | null;
 }
@@ -123,6 +125,13 @@ function payBlock(v: View): Raw {
           <div class="kv"><span>Bank</span><b>${b.bank}</b></div>
           <div class="kv"><span>Account name</span><b>${b.account_name}</b>${copyBtn(b.account_name)}</div>
           <div class="kv"><span>Account number</span><b>${b.account_number}</b>${copyBtn(b.account_number)}</div>
+          ${v.qr ? html`
+            <div class="paymv-pay">
+              <p style="margin:0"><b>Or scan this with the BML app.</b> The account and amount fill in by themselves.</p>
+              <div class="paymv">${raw(qrSvg(v.qr))}</div>
+              <a class="btn secondary-btn" href="${qrPngUrl(v.qr)}" download="alina-bun-${v.public_id}.png">Save QR code</a>
+              <p class="hint">On this phone? Save it, then in the BML app choose to scan a QR code from your photos.</p>
+            </div>` : ""}
         </li>
         <li><p>Take a screenshot of the payment confirmation.</p></li>
         <li><p>Upload the screenshot here.</p>${uploadBlock(v)}</li>

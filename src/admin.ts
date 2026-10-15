@@ -1,8 +1,8 @@
 // "/admin/" — managers. Supabase Auth email + password (no sign-up); every call carries the JWT
 // and the store function checks it against store.managers.
-import qrcode from "qrcode-generator";
 import { uploadTo } from "./image.ts";
 import { $, api, copyBtn, html, mvr, raw, type Raw, render, store } from "./lib.ts";
+import { qrSvg } from "./qr.ts";
 
 const AUTH_URL = `${import.meta.env.VITE_SUPABASE_URL}/auth/v1`;
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -402,14 +402,6 @@ async function newInvoice() {
   };
 }
 
-/** PayMV QR as SVG. Payload is built and checksummed by the server. */
-function qrSvg(payload: string): string {
-  const q = qrcode(0, "M");
-  q.addData(payload);
-  q.make();
-  return q.createSvgTag({ cellSize: 4, margin: 4, scalable: true });
-}
-
 async function invoiceView(number: string) {
   const v = await call(`/admin/invoice?id=${encodeURIComponent(number)}`);
   const fmtDate = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC", day: "numeric", month: "long", year: "numeric" });
@@ -446,9 +438,9 @@ async function invoiceView(number: string) {
       </table>
       ${v.notes ? html`<p style="margin-top:var(--space-4)">${v.notes}</p>` : ""}
       <div class="row" style="margin-top:var(--space-5);align-items:center;flex-wrap:wrap">
-        ${v.qr ? html`<div class="paymv">${raw(qrSvg(v.qr))}<div class="small">Scan to pay ${mvr(v.totals.due)}</div></div>` : ""}
+        ${v.qr ? html`<div class="paymv">${raw(qrSvg(v.qr))}<div class="small">Scan with the BML app to pay ${mvr(v.totals.due)}</div></div>` : ""}
         <p class="small grow" style="margin:0"><b>Please pay by bank transfer</b><br>
-          ${v.qr ? "Scan the QR code with your bank app (PayMV), or transfer to:" : ""}<br>
+          ${v.qr ? "Scan the QR code with the BML app, or transfer to:" : ""}<br>
           ${v.bank.bank} · ${v.bank.account_name} · ${v.bank.account_number}</p>
       </div>
     </div>`);
