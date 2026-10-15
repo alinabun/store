@@ -331,7 +331,7 @@ async function products() {
   const form = (p: any) => html`
     <form class="card" data-product="${p.id ?? ""}">
       <div class="row">
-        ${p.image_url ? html`<img src="${p.image_url}" alt="" style="width:72px;height:72px;object-fit:cover;border-radius:9px">` : ""}
+        ${p.image_url ? html`<img src="${p.image_url}" alt="" style="width:54px;height:96px;object-fit:cover;border-radius:9px">` : ""}
         <h3 class="grow">${p.name ?? "New product"}</h3>
       </div>
       <div class="filters">

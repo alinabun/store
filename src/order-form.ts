@@ -1,5 +1,5 @@
 // "/" — pick buns, a day, and details; the server re-prices everything.
-import { $, api, html, mvr, render, store } from "./lib.ts";
+import { $, api, html, mvr, raw, render, store } from "./lib.ts";
 import { type Pin, pinPicker } from "./map.ts";
 
 interface Product { id: string; name: string; description: string | null; price_mvr: string; image_url: string | null }
@@ -24,10 +24,11 @@ async function load() {
   pin = saved?.pin ?? null;
   render(app, html`
     <form id="f" novalidate>
-      ${products.map((p) => html`
-        <div class="card product">
-          ${p.image_url ? html`<img src="${p.image_url}" alt="" loading="lazy" width="72" height="72">` : html`<div class="ph"></div>`}
-          <div class="grow">
+      <div class="products">
+      ${products.map((p, i) => html`
+        <div class="product">
+          ${p.image_url ? html`<img src="${p.image_url}" alt="${p.name} bun" ${i < 2 ? "" : raw('loading="lazy"')} width="450" height="800">` : html`<div class="ph"></div>`}
+          <div class="product-body">
             <h3>${p.name}</h3>
             ${p.description ? html`<p class="small muted">${p.description}</p>` : ""}
             <div class="muted small">${mvr(p.price_mvr)}</div>
@@ -38,6 +39,7 @@ async function load() {
             <button type="button" class="round" data-step="1" data-id="${p.id}" aria-label="One more ${p.name}">+</button>
           </div>
         </div>`)}
+      </div>
 
       <div class="card">
         <h2>Delivery day</h2>
