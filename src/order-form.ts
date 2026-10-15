@@ -28,6 +28,7 @@ async function load() {
       ${products.map((p, i) => html`
         <div class="product">
           ${p.image_url ? html`<img src="${p.image_url}" alt="${p.name} bun" ${i < 2 ? "" : raw('loading="lazy"')} width="450" height="800">` : html`<div class="ph"></div>`}
+          <div class="product-row">
           <div class="product-body">
             <h3>${p.name}</h3>
             ${p.description ? html`<p class="small muted">${p.description}</p>` : ""}
@@ -37,6 +38,7 @@ async function load() {
             <button type="button" class="round" data-step="-1" data-id="${p.id}" aria-label="One less ${p.name}">−</button>
             <output id="q-${p.id}" aria-live="polite">0</output>
             <button type="button" class="round" data-step="1" data-id="${p.id}" aria-label="One more ${p.name}">+</button>
+          </div>
           </div>
         </div>`)}
       </div>

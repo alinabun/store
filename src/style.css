@@ -62,17 +62,18 @@ textarea { min-height: 80px; resize: vertical; }
 .grow { flex: 1; min-width: 0; }
 
 /* Order form */
-/* Two-column menu with the tall (9:16) bun photos. */
-.products { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); margin-bottom: var(--space-4); }
+/* Menu of tall (9:16) bun photos: one per row on phones, two side by side on wider screens. */
+.products { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); margin-bottom: var(--space-4); }
+@media (min-width: 480px) { .products { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); } }
 .product {
   display: flex; flex-direction: column; background: var(--bg-raised); border: 1px solid var(--border);
   border-radius: var(--radius-md); overflow: hidden; box-shadow: var(--shadow-sm);
 }
 .product img, .product .ph { display: block; width: 100%; height: auto; aspect-ratio: 9 / 16; object-fit: cover; background: var(--surface); }
-.product-body { padding: var(--space-3) var(--space-3) 0; flex: 1; }
+/* Name and price beside the − / + (wraps under it when the card is narrow). */
+.product-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-3); padding: var(--space-3) var(--space-4); }
 .product-body h3 { margin-bottom: var(--space-1); }
 .product-body p { margin-bottom: var(--space-1); }
-.product .qty { justify-content: space-between; padding: var(--space-3); }
 .qty { display: flex; align-items: center; gap: var(--space-2); }
 .qty output { min-width: 2ch; text-align: center; font-weight: 600; font-size: 1.1rem; }
 .dates { display: flex; flex-wrap: wrap; gap: var(--space-2); }
