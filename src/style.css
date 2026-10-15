@@ -140,6 +140,9 @@ table.list tr[data-id]:hover { background: var(--bg); }
 .scroll { overflow-x: auto; }
 pre { white-space: pre-wrap; word-break: break-all; font-size: .8rem; background: var(--bg); padding: var(--space-2); border-radius: var(--radius-sm); }
 
+.paymv { width: 180px; text-align: center; }
+.paymv svg { display: block; width: 180px; height: 180px; }
+
 /* Printing an invoice: only the invoice itself. */
 @media print {
   header.top, nav.tabs, .no-print { display: none !important; }
