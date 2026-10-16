@@ -26,7 +26,9 @@ The browser never touches tables: everything goes through the `store` function.
 
 1. `/` → `create-order`. The customer drops a pin on the map (street or satellite; their own location shows as a
    blue dot) and may add directions. The server re-prices from `store.products`, checks the 20:00 Malé cutoff, the
-   7-day booking window, off days and the daily capacity (locked per date), and returns the order ID (`AB-7K4Q`) and the status token.
+   7-day booking window, off days and what's left (locked per date): before the cutoff the day before, a pre-order
+   (max 50 buns per day and 50 per flavour, both editable); after it, and on the day, only the extras baked beyond
+   the orders, and returns the order ID (`AB-7K4Q`) and the status token.
 2. `/order/?t=…` shows the bank details and a PayMV QR for the total (scan with the BML app, or save it and scan
    from photos). The customer transfers, uploads a screenshot (compressed to 1600 px in
    the browser), and OCR (Tesseract, loaded only then) fills in the BML reference. The customer checks it and sends.
@@ -55,7 +57,9 @@ permanent copy: search the order ID in the slips group.
   - **Cancel** (reason shown to the customer)
   - **Reject order** (fake orders)
   - **Clear review flag** (after you've refunded an overpayment, etc.)
-- **Production**: buns per product for a date: paid / checking with the bank / not paid yet.
+- **Production**: per bun for a day: the baking plan (editable here, or with /plan in the Telegram bot; both write
+  the same plan), baked so far (bot /batch), pre-orders, extras sold, extras left, and paid / checking / not paid.
+  Also the pre-order limit per day. The per-flavour limit is on each product.
 - **Days**: weekly off days (Fri + Sat to start; a change starts 8 days out, after the days customers can already
   book) and one-time off days for any of the next 14 days. Orders already placed for a day you close stay; cancel them if needed.
 - Each order shows **📍 Open pin in Google Maps**; the slips Telegram caption has the same link.

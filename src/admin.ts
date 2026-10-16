@@ -245,19 +245,64 @@ async function act(o: any, action: string) {
 
 async function production(date: string) {
   date ||= tomorrow();
+  type Row = {
+    product_id: string; product_name: string; linked: boolean; planned: number | null; baked: number;
+    paid: number; checking: number; unpaid: number; preorders: number; extras: number;
+  };
   const r = await call(`/admin/production?date=${date}`);
-  // deno-lint-ignore no-explicit-any
-  const sum = (k: string) => r.products.reduce((a: number, p: any) => a + p[k], 0);
+  const rows = r.products as Row[];
+  const sum = (k: keyof Row) => rows.reduce((a, p) => a + Number(p[k] ?? 0), 0);
+  // Buns customers can still order as extras: what's baked (or planned, whichever is higher) minus all orders.
+  const left = (p: Row) => Math.max(0, Math.max(p.planned ?? 0, p.baked) - p.preorders - p.extras);
   shell("production", html`
-    <div class="filters"><label>Delivery date<input type="date" id="d" value="${date}"></label></div>
+    <div class="filters">
+      <label>Day<input type="date" id="d" value="${date}"></label>
+      <label>Pre-order limit per day (buns)<input id="pmax" type="number" min="0" step="1" value="${r.preorder_max_buns}"></label>
+      <button class="secondary" id="save-pmax">Save limit</button>
+    </div>
     <h2>${r.label}</h2>
-    <table class="list">
-      <tr><th>Bun</th><th>Paid</th><th>Checking</th><th>Not paid yet</th></tr>
-      ${r.products.map((p: Record<string, string>) => html`<tr><td>${p.product_name}</td><td><b>${p.paid}</b></td><td>${p.checking}</td><td class="muted">${p.unpaid}</td></tr>`)}
-      <tr><td><b>Total</b></td><td><b>${sum("paid")}</b></td><td>${sum("checking")}</td><td class="muted">${sum("unpaid")}</td></tr>
-    </table>
+    <form id="plan"><div class="scroll"><table class="list">
+      <tr><th>Bun</th><th>Baking</th><th>Baked</th><th>Pre-orders</th><th>Extras sold</th><th>Extras left</th><th>Paid</th><th>Checking</th><th>Not paid</th></tr>
+      ${rows.map((p) => html`<tr>
+        <td>${p.product_name}</td>
+        <td>${p.linked ? html`<input name="${p.product_id}" type="number" min="0" step="1" value="${p.planned ?? ""}" placeholder="–" style="max-width:80px">` : html`<span class="muted small">not in bot</span>`}</td>
+        <td>${p.baked || html`<span class="muted">–</span>`}</td>
+        <td>${p.preorders}</td><td>${p.extras}</td><td><b>${left(p)}</b></td>
+        <td>${p.paid}</td><td>${p.checking}</td><td class="muted">${p.unpaid}</td></tr>`)}
+      <tr><td><b>Total</b></td><td>${sum("planned")}</td><td>${sum("baked")}</td><td>${sum("preorders")}</td><td>${sum("extras")}</td>
+        <td><b>${rows.reduce((a, p) => a + left(p), 0)}</b></td><td>${sum("paid")}</td><td>${sum("checking")}</td><td class="muted">${sum("unpaid")}</td></tr>
+    </table></div>
+    <div class="row" style="margin-top:var(--space-3);flex-wrap:wrap">
+      <button>Save baking plan</button>
+      <span class="small muted grow">Same plan as the Telegram bot's /plan; Baked comes from /batch. Extras left = the higher of the two, minus all orders.</span>
+    </div></form>
+    <div id="prod-msg"></div>
     <p class="small muted" style="margin-top:var(--space-3)">Paid = paid or delivered. Checking = waiting for the bank. Cancelled and rejected orders are left out.</p>`);
+  const msg = (m: string, ok = false) => render($("#prod-msg"), html`<div class="notice ${ok ? "ok" : "bad"} small" style="margin-top:var(--space-3)">${m}</div>`);
   $<HTMLInputElement>("#d").onchange = (e) => go({ tab: "production", date: (e.target as HTMLInputElement).value });
+  $("#save-pmax").onclick = async () => {
+    try {
+      await call("/admin/config", { preorder_max_buns: Number($<HTMLInputElement>("#pmax").value) });
+      msg("Pre-order limit saved.", true);
+    } catch (e) {
+      msg((e as Error).message);
+    }
+  };
+  $<HTMLFormElement>("#plan").onsubmit = async (e) => {
+    e.preventDefault();
+    const lines = [...(e.target as HTMLFormElement).querySelectorAll<HTMLInputElement>("input[type=number]")]
+      .filter((i) => i.value !== "").map((i) => ({ product_id: i.name, qty: Number(i.value) }));
+    if (!lines.length) return msg("Enter how many of each bun you're baking.");
+    const short = rows.find((p) => lines.some((l) => l.product_id === p.product_id && l.qty < p.preorders));
+    if (short && !confirm(`${short.product_name}: that's fewer than the ${short.preorders} pre-ordered. Save anyway?`)) return;
+    try {
+      await call("/admin/plan", { date, lines });
+      await production(date);
+      msg("Baking plan saved. Customers can now order the extras.", true);
+    } catch (err) {
+      msg((err as Error).message);
+    }
+  };
 }
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -491,6 +536,7 @@ async function products() {
         <label>Name<input name="name" value="${p.name ?? ""}"></label>
         <label>Price (MVR)<input name="price_mvr" inputmode="decimal" value="${p.price_mvr ?? ""}"></label>
         <label>Order on page<input name="sort_order" type="number" value="${p.sort_order ?? 100}"></label>
+        <label>Pre-order limit per day<input name="preorder_max" type="number" min="0" step="1" value="${p.preorder_max ?? 50}"></label>
       </div>
       <label>Description<input name="description" value="${p.description ?? ""}"></label>
       <div class="row" style="margin-top:var(--space-3)">
@@ -519,7 +565,7 @@ async function saveProduct(e: Event, f: HTMLFormElement) {
     }
     await call("/admin/product", {
       id, name: d.get("name"), price_mvr: d.get("price_mvr"), description: d.get("description"),
-      sort_order: Number(d.get("sort_order")), active: d.get("active") === "on", ...(image_path ? { image_path } : {}),
+      sort_order: Number(d.get("sort_order")), preorder_max: Number(d.get("preorder_max")), active: d.get("active") === "on", ...(image_path ? { image_path } : {}),
     });
     msg("Saved.", true);
     setTimeout(products, 600);

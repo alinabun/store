@@ -3,7 +3,10 @@ import { $, api, html, mvr, raw, render, store } from "./lib.ts";
 import { type Pin, pinPicker } from "./map.ts";
 
 interface Product { id: string; name: string; description: string | null; price_mvr: string; image_url: string | null }
-interface DeliveryDate { date: string; label: string; available: boolean; closed: boolean; left: number }
+interface DeliveryDate {
+  date: string; label: string; kind: "preorder" | "extras"; available: boolean; closed: boolean; left: number;
+  products: Record<string, number>; // buns of each kind still available that day
+}
 
 const MAX_PER_LINE = 50, MAX_BUNS = 100;
 const app = $("#app");
@@ -24,6 +27,16 @@ async function load() {
   pin = saved?.pin ?? null;
   render(app, html`
     <form id="f" novalidate>
+      <div class="card">
+        <h2>Which day?</h2>
+        <div class="dates" role="radiogroup" aria-label="Delivery day">
+          ${dates.map((d) => html`
+            <label><input type="radio" name="delivery_date" value="${d.date}" ${d.available ? "" : "disabled"} ${d.date === firstOpen ? "checked" : ""}>
+              <span>${d.label}${!d.available ? html`<small>${d.closed ? "Closed" : "Sold out"}</small>` : d.kind === "extras" ? html`<small>Extras</small>` : ""}</span></label>`)}
+        </div>
+        <p class="hint" id="day-hint"></p>
+      </div>
+
       <div class="products">
       ${products.map((p, i) => html`
         <div class="product">
@@ -32,7 +45,7 @@ async function load() {
           <div class="product-body">
             <h3>${p.name}</h3>
             ${p.description ? html`<p class="small muted">${p.description}</p>` : ""}
-            <div class="muted small">${mvr(p.price_mvr)}</div>
+            <div class="muted small">${mvr(p.price_mvr)} <span class="left" id="left-${p.id}"></span></div>
           </div>
           <div class="qty">
             <button type="button" class="round" data-step="-1" data-id="${p.id}" aria-label="One less ${p.name}">−</button>
@@ -44,13 +57,6 @@ async function load() {
       </div>
 
       <div class="card">
-        <h2>Delivery day</h2>
-        <div class="dates" role="radiogroup" aria-label="Delivery day">
-          ${dates.map((d) => html`
-            <label><input type="radio" name="delivery_date" value="${d.date}" ${d.available ? "" : "disabled"} ${d.date === firstOpen ? "checked" : ""}>
-              <span>${d.label}${d.available ? "" : html`<small>${d.closed ? "Closed" : "Sold out"}</small>`}</span></label>`)}
-        </div>
-
         <label for="name">Your name</label>
         <input id="name" name="name" autocomplete="name" maxlength="80" value="${saved?.name ?? ""}" required>
 
@@ -83,7 +89,8 @@ async function load() {
     const id = b.dataset.id!;
     const total = [...qty.values()].reduce((a, n) => a + n, 0);
     const step = Number(b.dataset.step);
-    const next = Math.max(0, Math.min(MAX_PER_LINE, (qty.get(id) ?? 0) + step));
+    const max = Math.min(MAX_PER_LINE, day()?.products[id] ?? 0);
+    const next = Math.max(0, Math.min(max, (qty.get(id) ?? 0) + step));
     if (step > 0 && total >= MAX_BUNS) return showError(`The most you can order at once is ${MAX_BUNS} buns.`);
     qty.set(id, next);
     $(`#q-${id}`).textContent = String(next);
@@ -94,8 +101,31 @@ async function load() {
     $("#pin-status").textContent = "📍 Pin placed. We'll call you when we're close.";
     showError("");
   }).catch(() => render($("#map"), html`<div class="notice bad">The map didn't load. Please check your internet and refresh the page.</div>`));
+  $("#f").addEventListener("change", (e) => {
+    if ((e.target as HTMLInputElement).name === "delivery_date") refreshDay();
+  });
+  refreshDay();
   $("#go").onclick = () => $("#submit").scrollIntoView({ behavior: "smooth", block: "center" });
   $<HTMLFormElement>("#f").onsubmit = submit;
+}
+
+const day = () => dates.find((d) => d.date === document.querySelector<HTMLInputElement>("input[name=delivery_date]:checked")?.value);
+
+/** Show what's left for the chosen day, and trim quantities that no longer fit. */
+function refreshDay() {
+  const d = day();
+  $("#day-hint").textContent = !d ? "Sorry, nothing is available right now. Please check back later."
+    : d.kind === "extras" ? `${d.label}: these are our extra buns, while they last.`
+    : `Pre-order for ${d.label}. Orders close at 8 pm the day before.`;
+  for (const p of products) {
+    const n = Math.min(MAX_PER_LINE, d?.products[p.id] ?? 0);
+    if ((qty.get(p.id) ?? 0) > n) {
+      qty.set(p.id, n);
+      $(`#q-${p.id}`).textContent = String(n);
+    }
+    $(`#left-${p.id}`).textContent = n === 0 ? "· Sold out" : d?.kind === "extras" || n <= 10 ? `· ${n} left` : "";
+  }
+  update();
 }
 
 function update() {
@@ -124,6 +154,8 @@ async function submit(e: SubmitEvent) {
   if (!date) return showError("Please pick a delivery day.");
   const buns = items.reduce((a, i) => a + i.qty, 0);
   if (buns > date.left) return showError(`Only ${date.left} buns are left for ${date.label}. Please order fewer or pick another day.`);
+  const over = items.find((i) => i.qty > (date.products[i.product_id] ?? 0));
+  if (over) return showError(`Only ${date.products[over.product_id] ?? 0} ${products.find((p) => p.id === over.product_id)?.name} left for ${date.label}.`);
   if (!get("name")) return showError("Please fill in your name.");
   if (!get("phone")) return showError("Please fill in your phone number.");
   if (!pin) {
