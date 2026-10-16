@@ -15,7 +15,8 @@ function loadLeaflet(): Promise<void> {
 }
 
 /** Tap to drop a pin, drag to move it. Shows the customer's own location as a blue dot when they allow it. */
-export async function pinPicker(el: HTMLElement, initial: Pin | null, onChange: (p: Pin) => void) {
+// deno-lint-ignore no-explicit-any
+export async function pinPicker(el: HTMLElement, initial: Pin | null, onChange: (p: Pin) => void): Promise<any> {
   await loadLeaflet();
   // deno-lint-ignore no-explicit-any
   const L = (window as any).L;
@@ -51,4 +52,5 @@ export async function pinPicker(el: HTMLElement, initial: Pin | null, onChange: 
       if (!marker) map.setView(ll, 17);
     }, () => {}, { enableHighAccuracy: true, timeout: 15_000, maximumAge: 60_000 });
   }).observe(el);
+  return map;
 }

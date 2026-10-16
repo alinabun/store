@@ -60,8 +60,9 @@ permanent copy: search the order ID in the slips group.
 - **Production**: per bun for a day: the baking plan (editable here, or with /plan in the Telegram bot; both write
   the same plan), baked so far (bot /batch), pre-orders, extras sold, extras left, and paid / checking / not paid.
   Also the pre-order limit per day. The per-flavour limit is on each product.
-- **Days**: weekly off days (Fri + Sat to start; a change starts 8 days out, after the days customers can already
-  book) and one-time off days for any of the next 14 days. Orders already placed for a day you close stay; cancel them if needed.
+- **Days**: ordering settings (pre-order limit per day, deliveries per day, minutes to pay before an unpaid order is
+  cancelled and its buns released, pickup details); weekly off days (Fri + Sat to start; a change starts 8 days out, after the days customers can already
+  book) and one-time off days for any of the next 14 days; a weekly off day can be opened for just that date. Orders already placed for a day you close stay; cancel them if needed.
 - Each order shows **📍 Open pin in Google Maps**; the slips Telegram caption has the same link.
 - **Invoices**: invoices for buns placed in shops. Pick the shop and invoice date, enter buns sold and free (tasting)
   per bun, the shop price and the shop's profit per bun sold (default MVR 5). The shop owes (price − profit) × sold.

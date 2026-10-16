@@ -6,6 +6,7 @@ interface Product { id: string; name: string; description: string | null; price_
 interface DeliveryDate {
   date: string; label: string; kind: "preorder" | "extras"; available: boolean; closed: boolean; left: number;
   products: Record<string, number>; // buns of each kind still available that day
+  delivery_open: boolean;
 }
 
 const MAX_PER_LINE = 50, MAX_BUNS = 100;
@@ -14,10 +15,15 @@ const qty = new Map<string, number>();
 let products: Product[] = [];
 let dates: DeliveryDate[] = [];
 let pin: Pin | null = null;
+let pickupPlace = "";
+// deno-lint-ignore no-explicit-any
+let leaflet: any = null;
 
 async function load() {
   try {
-    [{ products }, { dates }] = await Promise.all([api("/catalog"), api("/delivery-dates")]);
+    let r;
+    [{ products }, r] = await Promise.all([api("/catalog"), api("/delivery-dates")]);
+    ({ dates, pickup_place: pickupPlace } = r);
   } catch (e) {
     render(app, html`<div class="notice bad">${(e as Error).message}</div><button onclick="location.reload()">Try again</button>`);
     return;
@@ -64,13 +70,22 @@ async function load() {
         <input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="7xx xxxx" value="${saved?.phone ?? ""}" required>
         <div class="hint">A Maldives mobile number, so we can call you about the delivery.</div>
 
-        <label>Where should we deliver?</label>
-        <p class="hint">Tap the map to put a pin on your home. Drag the pin to move it. The blue dot is where you are now.</p>
-        <div id="map" class="map" aria-label="Map: tap to put your delivery pin"></div>
-        <div class="hint" id="pin-status">${saved?.pin ? "Pin from your last order. Move it if you're somewhere else." : "No pin yet."}</div>
+        <label>Delivery or pickup?</label>
+        <div class="dates" role="radiogroup" aria-label="Delivery or pickup">
+          <label><input type="radio" name="fulfilment" value="delivery" checked><span>Delivery<small id="delivery-full"></small></span></label>
+          <label><input type="radio" name="fulfilment" value="pickup"><span>Pickup</span></label>
+        </div>
 
-        <label for="address">Directions <span class="muted">(optional)</span></label>
-        <textarea id="address" name="address" maxlength="500" placeholder="House name, floor, door colour, what's nearby">${saved?.address ?? ""}</textarea>
+        <div id="delivery-box">
+          <label>Where should we deliver?</label>
+          <p class="hint">Tap the map to put a pin on your home. Drag the pin to move it. The blue dot is where you are now.</p>
+          <div id="map" class="map" aria-label="Map: tap to put your delivery pin"></div>
+          <div class="hint" id="pin-status">${saved?.pin ? "Pin from your last order. Move it if you're somewhere else." : "No pin yet."}</div>
+
+          <label for="address">Directions <span class="muted">(optional)</span></label>
+          <textarea id="address" name="address" maxlength="500" placeholder="House name, floor, door colour, what's nearby">${saved?.address ?? ""}</textarea>
+        </div>
+        <div id="pickup-box" hidden><div class="notice info" style="margin-top:var(--space-3)">${pickupPlace}</div></div>
 
         <label for="notes">Notes <span class="muted">(optional)</span></label>
         <textarea id="notes" name="notes" maxlength="500" placeholder="Anything we should know?"></textarea>
@@ -96,13 +111,14 @@ async function load() {
     $(`#q-${id}`).textContent = String(next);
     update();
   });
-  pinPicker($("#map"), saved?.pin ?? null, (p) => {
+  leaflet = pinPicker($("#map"), saved?.pin ?? null, (p) => {
     pin = { lat: p.lat, lng: p.lng };
     $("#pin-status").textContent = "📍 Pin placed. We'll call you when we're close.";
     showError("");
   }).catch(() => render($("#map"), html`<div class="notice bad">The map didn't load. Please check your internet and refresh the page.</div>`));
   $("#f").addEventListener("change", (e) => {
     if ((e.target as HTMLInputElement).name === "delivery_date") refreshDay();
+    if ((e.target as HTMLInputElement).name === "fulfilment") refreshFulfilment();
   });
   refreshDay();
   $("#go").onclick = () => $("#submit").scrollIntoView({ behavior: "smooth", block: "center" });
@@ -125,7 +141,23 @@ function refreshDay() {
     }
     $(`#left-${p.id}`).textContent = n === 0 ? "· Sold out" : d?.kind === "extras" || n <= 10 ? `· ${n} left` : "";
   }
+  // Deliveries are capped per day; when full, only pickup is offered.
+  const radio = document.querySelector<HTMLInputElement>("input[name=fulfilment][value=delivery]")!;
+  radio.disabled = !!d && !d.delivery_open;
+  $("#delivery-full").textContent = radio.disabled ? "Full that day" : "";
+  if (radio.disabled) document.querySelector<HTMLInputElement>("input[name=fulfilment][value=pickup]")!.checked = true;
+  refreshFulfilment();
   update();
+}
+
+const fulfilment = () => document.querySelector<HTMLInputElement>("input[name=fulfilment]:checked")?.value ?? "delivery";
+
+function refreshFulfilment() {
+  const pickup = fulfilment() === "pickup";
+  $("#delivery-box").hidden = pickup;
+  $("#pickup-box").hidden = !pickup;
+  // The map was sized while hidden; let Leaflet measure again.
+  if (!pickup) leaflet?.then((m: { invalidateSize: () => void }) => m?.invalidateSize());
 }
 
 function update() {
@@ -158,7 +190,7 @@ async function submit(e: SubmitEvent) {
   if (over) return showError(`Only ${date.products[over.product_id] ?? 0} ${products.find((p) => p.id === over.product_id)?.name} left for ${date.label}.`);
   if (!get("name")) return showError("Please fill in your name.");
   if (!get("phone")) return showError("Please fill in your phone number.");
-  if (!pin) {
+  if (fulfilment() === "delivery" && !pin) {
     $("#map").scrollIntoView({ behavior: "smooth", block: "center" });
     return showError("Please tap the map to show us where to deliver.");
   }
@@ -168,7 +200,7 @@ async function submit(e: SubmitEvent) {
   btn.textContent = "Placing your order…";
   try {
     const r = await api<{ status_token: string }>("/create-order", {
-      body: { name: get("name"), phone: get("phone"), lat: pin.lat, lng: pin.lng, address: get("address") || null, notes: get("notes") || null, delivery_date: date.date, items },
+      body: { name: get("name"), phone: get("phone"), fulfilment: fulfilment(), ...(fulfilment() === "delivery" && pin ? { lat: pin.lat, lng: pin.lng, address: get("address") || null } : {}), notes: get("notes") || null, delivery_date: date.date, items },
     });
     store("alinabun.customer", { name: get("name"), phone: get("phone"), address: get("address"), pin });
     location.href = `/order/?t=${encodeURIComponent(r.status_token)}`;

@@ -148,7 +148,7 @@ async function orders(p: URLSearchParams) {
           <td>${o.customer_name}<div class="small muted">${o.phone}</div></td>
           <td>${o.delivery_date}</td>
           <td>${mvr(o.total_mvr)}<div class="small muted">${o.total_buns} buns</div></td>
-          <td>${chip(o.status)} ${o.needs_review ? html`<span class="chip review">review</span>` : ""}</td>
+          <td>${chip(o.status)} ${o.fulfilment === "pickup" ? html`<span class="chip">pickup</span>` : ""} ${o.needs_review ? html`<span class="chip review">review</span>` : ""}</td>
         </tr>`)}
     </table></div>
     ${r.orders.length ? "" : html`<p class="muted">No orders.</p>`}
@@ -184,7 +184,7 @@ async function orderDetail(id: string) {
       <p>${o.customer_name} · <a href="tel:${o.phone}">${o.phone}</a>${o.address ? html`<br>${o.address}` : ""}</p>
       ${o.map_url ? html`<p><a class="btn" href="${o.map_url}" target="_blank" rel="noopener">📍 Open pin in Google Maps</a></p>` : ""}
       ${o.notes ? html`<p class="muted">Notes: ${o.notes}</p>` : ""}
-      <p class="small">Delivery <b>${o.delivery_date}</b> · ${copyBtn(o.status_url, "Copy customer's order link")}</p>
+      <p class="small">${o.fulfilment === "pickup" ? "Pickup" : "Delivery"} <b>${o.delivery_date}</b> · ${copyBtn(o.status_url, "Copy customer's order link")}</p>
     </div>
     <div class="card">
       <h2>Items</h2>
@@ -257,10 +257,10 @@ async function production(date: string) {
   shell("production", html`
     <div class="filters">
       <label>Day<input type="date" id="d" value="${date}"></label>
-      <label>Pre-order limit per day (buns)<input id="pmax" type="number" min="0" step="1" value="${r.preorder_max_buns}"></label>
-      <button class="secondary" id="save-pmax">Save limit</button>
     </div>
     <h2>${r.label}</h2>
+    <p>Deliveries: <b>${r.deliveries} of ${r.settings.delivery_max_orders}</b> · Pre-orders: <b>${sum("preorders")} of ${r.settings.preorder_max_buns}</b> buns
+      <span class="muted small">(limits are in Days → Ordering settings)</span></p>
     <form id="plan"><div class="scroll"><table class="list">
       <tr><th>Bun</th><th>Baking</th><th>Baked</th><th>Pre-orders</th><th>Extras sold</th><th>Extras left</th><th>Paid</th><th>Checking</th><th>Not paid</th></tr>
       ${rows.map((p) => html`<tr>
@@ -280,14 +280,6 @@ async function production(date: string) {
     <p class="small muted" style="margin-top:var(--space-3)">Paid = paid or delivered. Checking = waiting for the bank. Cancelled and rejected orders are left out.</p>`);
   const msg = (m: string, ok = false) => render($("#prod-msg"), html`<div class="notice ${ok ? "ok" : "bad"} small" style="margin-top:var(--space-3)">${m}</div>`);
   $<HTMLInputElement>("#d").onchange = (e) => go({ tab: "production", date: (e.target as HTMLInputElement).value });
-  $("#save-pmax").onclick = async () => {
-    try {
-      await call("/admin/config", { preorder_max_buns: Number($<HTMLInputElement>("#pmax").value) });
-      msg("Pre-order limit saved.", true);
-    } catch (e) {
-      msg((e as Error).message);
-    }
-  };
   $<HTMLFormElement>("#plan").onsubmit = async (e) => {
     e.preventDefault();
     const lines = [...(e.target as HTMLFormElement).querySelectorAll<HTMLInputElement>("input[type=number]")]
@@ -309,11 +301,23 @@ const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const dayNames = (w: number[]) => w.length ? w.map((d) => WEEKDAYS[d]).join(", ") : "none";
 
 async function days() {
-  type Day = { date: string; label: string; off: "weekly" | "one_time" | null; booked: number };
+  type Day = { date: string; label: string; off: "weekly" | "one_time" | null; opened: boolean; booked: number };
   const r = await call("/admin/days");
   const [now, ...later] = r.weekly as { from: string; label: string; weekdays: number[] }[];
   const editing = (later.at(-1) ?? now).weekdays;
+  const st = r.settings;
   shell("days", html`
+    <form class="card" id="settings">
+      <h2>Ordering settings</h2>
+      <div class="filters">
+        <label>Pre-order limit per day (buns)<input name="preorder_max_buns" type="number" min="0" step="1" value="${st.preorder_max_buns}"></label>
+        <label>Deliveries per day (orders)<input name="delivery_max_orders" type="number" min="0" step="1" value="${st.delivery_max_orders}"></label>
+        <label>Minutes to pay before an order is cancelled<input name="pay_within_minutes" type="number" min="5" step="1" value="${st.pay_within_minutes}"></label>
+      </div>
+      <label>Pickup details (shown to customers who pick up)<textarea name="pickup_place" maxlength="300">${st.pickup_place}</textarea></label>
+      <div class="row" style="margin-top:var(--space-3)"><button>Save settings</button><span id="settings-msg" class="small"></span></div>
+      <p class="hint">The pre-order limit per flavour is on each bun in Products.</p>
+    </form>
     <div class="card">
       <h2>Weekly off days</h2>
       <p>Now: <b>${dayNames(now.weekdays)}</b>
@@ -324,16 +328,31 @@ async function days() {
       </div>
       <p class="hint">A change starts on ${r.change_label}, after the days customers can already book.</p>
     </div>
-    <p class="muted">Customers can order up to 7 days ahead. Make a one-time off day for any day below.
+    <p class="muted">Customers can order up to 7 days ahead. Make a one-time off day for any day below, or open a weekly off day just this once.
       Orders already placed for a day you close stay; cancel them from Orders if needed.</p>
     <table class="list">
       <tr><th>Day</th><th>Booked</th><th></th></tr>
       ${r.days.map((d: Day) => html`
-        <tr><td><b>${d.label}</b> ${d.off === "weekly" ? html`<span class="chip">weekly off</span>` : d.off ? html`<span class="chip cancelled">off day</span>` : ""}</td>
+        <tr><td><b>${d.label}</b> ${d.off === "weekly" ? html`<span class="chip">weekly off</span>` : d.off ? html`<span class="chip cancelled">off day</span>` : d.opened ? html`<span class="chip paid">open (normally off)</span>` : ""}</td>
           <td>${d.booked ? `${d.booked} bun${d.booked > 1 ? "s" : ""}` : html`<span class="muted">–</span>`}</td>
-          <td style="text-align:right">${d.off === "weekly" ? "" : html`<button class="${d.off ? "" : "secondary"}" data-day="${d.date}" data-off="${String(!d.off)}">${d.off ? "Open again" : "Make off day"}</button>`}</td></tr>`)}
+          <td style="text-align:right"><button class="${d.off ? "" : "secondary"}" data-day="${d.date}" data-off="${String(!d.off)}">${
+            d.off === "weekly" ? "Open this day" : d.off ? "Open again" : d.opened ? "Close again" : "Make off day"}</button></td></tr>`)}
     </table>
     <div id="day-err"></div>`);
+  $<HTMLFormElement>("#settings").onsubmit = async (e) => {
+    e.preventDefault();
+    const f = e.target as HTMLFormElement;
+    const n = (k: string) => Number((f.elements.namedItem(k) as HTMLInputElement).value);
+    try {
+      await call("/admin/config", {
+        preorder_max_buns: n("preorder_max_buns"), delivery_max_orders: n("delivery_max_orders"), pay_within_minutes: n("pay_within_minutes"),
+        pickup_place: (f.elements.namedItem("pickup_place") as HTMLTextAreaElement).value,
+      });
+      $("#settings-msg").textContent = "Saved.";
+    } catch (err) {
+      $("#settings-msg").textContent = (err as Error).message;
+    }
+  };
   const fail = (e: unknown) => render($("#day-err"), html`<div class="notice bad" style="margin-top:var(--space-3)">${(e as Error).message}</div>`);
   $("#save-weekly").onclick = async () => {
     const weekdays = [...app.querySelectorAll<HTMLInputElement>("input[name=wd]:checked")].map((c) => Number(c.value));

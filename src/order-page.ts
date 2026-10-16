@@ -23,6 +23,10 @@ interface View {
   qr: string | null;
   paid_amount: string | null;
   overpaid_mvr: string | null;
+  fulfilment: "delivery" | "pickup";
+  pickup_place: string | null;
+  pay_by: string | null;    // unpaid orders are cancelled after this
+  late_upload: boolean;     // cancelled for not paying in time; a slip can still be sent
 }
 
 const OUR_ACCOUNT = "7730000565406";
@@ -75,7 +79,10 @@ function paint() {
     ${v.overpaid_mvr ? html`<div class="notice info">You sent ${mvr(v.paid_amount!)} and your order is ${mvr(v.total_mvr)}.
       We'll message you about the extra ${mvr(v.overpaid_mvr)}.</div>` : ""}
 
+    ${v.pay_by ? html`<div class="notice warn small">Please pay by <b>${new Date(v.pay_by).toLocaleTimeString("en-GB", { timeZone: "Indian/Maldives", hour: "2-digit", minute: "2-digit" })}</b>.
+      After that the order is cancelled and the buns go back on sale.</div>` : ""}
     ${v.status === "awaiting_payment" && !v.on_hold ? payBlock(v) : ""}
+    ${v.late_upload ? html`<div class="card"><p><b>Already paid?</b> Upload the screenshot and we'll check it.</p>${uploadBlock(v)}</div>` : ""}
     ${v.on_hold ? html`
       <div class="card">
         <p><b>Please don't send the full amount again.</b> Message us first and we'll sort it out together.</p>
@@ -94,10 +101,11 @@ function paint() {
         ${v.items.map((i) => html`<tr><td>${i.qty} × ${i.product_name}</td><td>${mvr(Number(i.unit_price) * i.qty)}</td></tr>`)}
         <tr class="total"><td>Total</td><td>${mvr(v.total_mvr)}</td></tr>
       </table>
-      <p style="margin-top:var(--space-4)"><b>Delivery:</b> ${v.delivery_label}<br>
-        <b>To:</b> ${v.customer_name}, ${v.phone}
+      <p style="margin-top:var(--space-4)"><b>${v.fulfilment === "pickup" ? "Pickup" : "Delivery"}:</b> ${v.delivery_label}<br>
+        <b>${v.fulfilment === "pickup" ? "For" : "To"}:</b> ${v.customer_name}, ${v.phone}
         ${v.map_url ? html`<br><a href="${v.map_url}" target="_blank" rel="noopener">📍 Your delivery pin</a>` : ""}
         ${v.address ? html`<br>${v.address}` : ""}</p>
+      ${v.pickup_place ? html`<div class="notice info small">${v.pickup_place}</div>` : ""}
       ${v.notes ? html`<p class="small muted">Notes: ${v.notes}</p>` : ""}
     </div>
 
