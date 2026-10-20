@@ -29,6 +29,8 @@ The browser never touches tables: everything goes through the `store` function.
    7-day booking window, off days and what's left (locked per date): before the cutoff the day before, a pre-order
    (max 50 buns per day and 50 per flavour, both editable); after it, and on the day, only the extras baked beyond
    the orders, and returns the order ID (`AB-7K4Q`) and the status token.
+   Delivery is to an address or to a boat (picked from FollowMe's boat list, imported daily, plus the time it will
+   be at the pin). Delivery outside Malé adds MVR 80 (editable); pickup is free.
 2. `/order/?t=…` shows the bank details and a PayMV QR for the total (scan with the BML app, or save it and scan
    from photos). The customer transfers, uploads a screenshot (compressed to 1600 px in
    the browser), and OCR (Tesseract, loaded only then) fills in the BML reference. The customer checks it and sends.

@@ -16,6 +16,9 @@ let products: Product[] = [];
 let dates: DeliveryDate[] = [];
 let pin: Pin | null = null;
 let pickupPlace = "";
+let fee = 0; // laari; delivery fee for the current pin (0 in Malé)
+interface Vessel { id: number; name: string; operator: string | null; vessel_type: string | null; location: string | null }
+let boat: Vessel | null = null;
 let cutoff = "8 pm"; // from the server's cutoff hour
 // deno-lint-ignore no-explicit-any
 let leaflet: any = null;
@@ -81,10 +84,24 @@ async function load() {
         </div>
 
         <div id="delivery-box">
-          <label>Where should we deliver?</label>
-          <p class="hint">Tap the map to put a pin on your home. Drag the pin to move it. The blue dot is where you are now.</p>
+          <div class="dates" role="radiogroup" aria-label="Deliver to" style="margin-top:var(--space-3)">
+            <label><input type="radio" name="deliver_to" value="address" checked><span>To an address</span></label>
+            <label><input type="radio" name="deliver_to" value="boat"><span>To a boat</span></label>
+          </div>
+          <div id="boat-box" hidden>
+            <label for="boat-q">Which boat?</label>
+            <input id="boat-q" type="search" autocomplete="off" placeholder="Type the boat's name" aria-describedby="boat-hint">
+            <div class="hint" id="boat-hint">From the FollowMe boat list. Can't find it? Choose "To an address" and put the pin where the boat will be.</div>
+            <div id="boat-results" class="boat-results" role="listbox"></div>
+            <div id="boat-picked"></div>
+            <label for="boat-time">What time will the boat be there?</label>
+            <input id="boat-time" type="time">
+          </div>
+          <label id="pin-label">Where should we deliver?</label>
+          <p class="hint" id="pin-hint">Tap the map to put a pin on your home. Drag the pin to move it. The blue dot is where you are now.</p>
           <div id="map" class="map" aria-label="Map: tap to put your delivery pin"></div>
           <div class="hint" id="pin-status">${saved?.pin ? "Pin from your last order. Move it if you're somewhere else." : "No pin yet."}</div>
+          <div class="hint" id="fee-status"></div>
 
           <label for="address">Directions <span class="muted">(optional)</span></label>
           <textarea id="address" name="address" maxlength="500" placeholder="House name, floor, door colour, what's nearby">${saved?.address ?? ""}</textarea>
@@ -119,12 +136,16 @@ async function load() {
     pin = { lat: p.lat, lng: p.lng };
     $("#pin-status").textContent = "📍 Pin placed. We'll call you when we're close.";
     showError("");
+    quoteFee();
   }).catch(() => render($("#map"), html`<div class="notice bad">The map didn't load. Please check your internet and refresh the page.</div>`));
   $("#f").addEventListener("change", (e) => {
     if ((e.target as HTMLInputElement).name === "delivery_date") refreshDay();
     if ((e.target as HTMLInputElement).name === "fulfilment") refreshFulfilment();
+    if ((e.target as HTMLInputElement).name === "deliver_to") refreshDeliverTo();
   });
   refreshDay();
+  wireBoatSearch();
+  if (pin) quoteFee();
   $("#go").onclick = () => $("#submit").scrollIntoView({ behavior: "smooth", block: "center" });
   $<HTMLFormElement>("#f").onsubmit = submit;
 }
@@ -162,6 +183,60 @@ function refreshFulfilment() {
   $("#pickup-box").hidden = !pickup;
   // The map was sized while hidden; let Leaflet measure again.
   if (!pickup) leaflet?.then((m: { invalidateSize: () => void }) => m?.invalidateSize());
+  update(); // the delivery fee only applies to delivery
+}
+
+const deliverTo = () => document.querySelector<HTMLInputElement>("input[name=deliver_to]:checked")?.value ?? "address";
+
+function refreshDeliverTo() {
+  const toBoat = deliverTo() === "boat";
+  $("#boat-box").hidden = !toBoat;
+  $("#pin-label").textContent = toBoat ? "Where will the boat be?" : "Where should we deliver?";
+  $("#pin-hint").textContent = toBoat
+    ? "Tap the map where the boat will be (the jetty or harbour). Drag the pin to move it."
+    : "Tap the map to put a pin on your home. Drag the pin to move it. The blue dot is where you are now.";
+}
+
+/** The server decides the fee (free in Malé); show it and add it to the total. */
+async function quoteFee() {
+  if (!pin) return;
+  try {
+    const r = await api<{ fee_mvr: string; in_male: boolean }>(`/delivery-fee?lat=${pin.lat}&lng=${pin.lng}`);
+    fee = Math.round(Number(r.fee_mvr) * 100);
+    $("#fee-status").textContent = r.in_male ? "Free delivery in Malé." : `Outside Malé: delivery fee ${mvr(r.fee_mvr)}.`;
+  } catch {
+    $("#fee-status").textContent = "";
+  }
+  update();
+}
+
+function wireBoatSearch() {
+  const q = $<HTMLInputElement>("#boat-q");
+  let timer: number | undefined;
+  q.oninput = () => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const term = q.value.trim();
+      if (term.length < 2) return render($("#boat-results"), html``);
+      try {
+        const { vessels } = await api<{ vessels: Vessel[] }>(`/vessels?q=${encodeURIComponent(term)}`);
+        render($("#boat-results"), vessels.length ? html`${vessels.map((v) => html`
+          <button type="button" class="boat-option" data-vessel="${v.id}">
+            <b>${v.name}</b><span class="small muted">${[v.vessel_type, v.operator, v.location && `now at ${v.location}`].filter(Boolean).join(" · ")}</span>
+          </button>`)}` : html`<p class="hint">No boat found. Try another spelling, or choose "To an address".</p>`);
+        $("#boat-results").querySelectorAll<HTMLButtonElement>("[data-vessel]").forEach((b) => (b.onclick = () => {
+          boat = vessels.find((v) => v.id === Number(b.dataset.vessel)) ?? null;
+          render($("#boat-results"), html``);
+          q.value = "";
+          render($("#boat-picked"), html`<div class="notice ok small">⛴ <b>${boat!.name}</b> ${boat!.vessel_type ? `· ${boat!.vessel_type}` : ""}
+            <button type="button" class="copy" id="boat-change">Change</button></div>`);
+          $("#boat-change").onclick = () => { boat = null; render($("#boat-picked"), html``); q.focus(); };
+        }));
+      } catch (e) {
+        render($("#boat-results"), html`<p class="hint">${(e as Error).message}</p>`);
+      }
+    }, 250);
+  };
 }
 
 function update() {
@@ -171,7 +246,8 @@ function update() {
     buns += n;
     laari += Math.round(Number(p.price_mvr) * 100) * n;
   }
-  $("#sum").textContent = buns ? `${buns} bun${buns > 1 ? "s" : ""} · ${mvr(laari / 100)}` : "No buns yet";
+  const withFee = fulfilment() === "delivery" && buns ? fee : 0;
+  $("#sum").textContent = buns ? `${buns} bun${buns > 1 ? "s" : ""} · ${mvr((laari + withFee) / 100)}${withFee ? " incl. delivery" : ""}` : "No buns yet";
   showError("");
 }
 
@@ -194,6 +270,9 @@ async function submit(e: SubmitEvent) {
   if (over) return showError(`Only ${date.products[over.product_id] ?? 0} ${products.find((p) => p.id === over.product_id)?.name} left for ${date.label}.`);
   if (!get("name")) return showError("Please fill in your name.");
   if (!get("phone")) return showError("Please fill in your phone number.");
+  const toBoat = fulfilment() === "delivery" && deliverTo() === "boat";
+  if (toBoat && !boat) return showError("Please search for your boat and pick it from the list.");
+  if (toBoat && !$<HTMLInputElement>("#boat-time").value) return showError("Please say what time the boat will be there.");
   if (fulfilment() === "delivery" && !pin) {
     $("#map").scrollIntoView({ behavior: "smooth", block: "center" });
     return showError("Please tap the map to show us where to deliver.");
@@ -204,7 +283,8 @@ async function submit(e: SubmitEvent) {
   btn.textContent = "Placing your order…";
   try {
     const r = await api<{ status_token: string }>("/create-order", {
-      body: { name: get("name"), phone: get("phone"), fulfilment: fulfilment(), ...(fulfilment() === "delivery" && pin ? { lat: pin.lat, lng: pin.lng, address: get("address") || null } : {}), notes: get("notes") || null, delivery_date: date.date, items },
+      body: { name: get("name"), phone: get("phone"), fulfilment: fulfilment(), ...(fulfilment() === "delivery" && pin ? { lat: pin.lat, lng: pin.lng, address: get("address") || null } : {}),
+        ...(toBoat ? { vessel_id: boat!.id, boat_time: $<HTMLInputElement>("#boat-time").value } : {}), notes: get("notes") || null, delivery_date: date.date, items },
     });
     store("alinabun.customer", { name: get("name"), phone: get("phone"), address: get("address"), pin });
     location.href = `/order/?t=${encodeURIComponent(r.status_token)}`;

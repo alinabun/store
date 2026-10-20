@@ -147,6 +147,9 @@ pre { white-space: pre-wrap; word-break: break-all; font-size: .8rem; background
 .paymv-pay .paymv svg { width: 220px; height: 220px; }
 .btn.secondary-btn { background: var(--surface); color: var(--text); }
 
+.boat-results { display: grid; gap: var(--space-1); margin-top: var(--space-2); max-height: 260px; overflow-y: auto; }
+.boat-option { display: flex; flex-direction: column; align-items: flex-start; text-align: left; background: var(--white); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 8px 12px; font-weight: 500; }
+
 /* Printing an invoice: only the invoice itself. */
 @media print {
   header.top, nav.tabs, .no-print { display: none !important; }
