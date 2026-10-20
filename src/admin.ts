@@ -313,10 +313,12 @@ async function days() {
         <label>Pre-order limit per day (buns)<input name="preorder_max_buns" type="number" min="0" step="1" value="${st.preorder_max_buns}"></label>
         <label>Deliveries per day (orders)<input name="delivery_max_orders" type="number" min="0" step="1" value="${st.delivery_max_orders}"></label>
         <label>Minutes to pay before an order is cancelled<input name="pay_within_minutes" type="number" min="5" step="1" value="${st.pay_within_minutes}"></label>
+        <label>Pre-orders close at (hour, 24h, the day before)<input name="order_cutoff_hour" type="number" min="1" max="23" step="1" value="${st.order_cutoff_hour}"></label>
+        <label>Instagram handle<input name="instagram" value="@${st.instagram}"></label>
       </div>
       <label>Pickup details (shown to customers who pick up)<textarea name="pickup_place" maxlength="300">${st.pickup_place}</textarea></label>
       <div class="row" style="margin-top:var(--space-3)"><button>Save settings</button><span id="settings-msg" class="small"></span></div>
-      <p class="hint">The pre-order limit per flavour is on each bun in Products.</p>
+      <p class="hint">The pre-order limit per flavour is on each bun in Products. The bot's evening reminder is sent at the cutoff hour.</p>
     </form>
     <div class="card">
       <h2>Weekly off days</h2>
@@ -346,6 +348,7 @@ async function days() {
     try {
       await call("/admin/config", {
         preorder_max_buns: n("preorder_max_buns"), delivery_max_orders: n("delivery_max_orders"), pay_within_minutes: n("pay_within_minutes"),
+        order_cutoff_hour: n("order_cutoff_hour"), instagram: (f.elements.namedItem("instagram") as HTMLInputElement).value,
         pickup_place: (f.elements.namedItem("pickup_place") as HTMLTextAreaElement).value,
       });
       $("#settings-msg").textContent = "Saved.";
@@ -481,7 +484,7 @@ async function invoiceView(number: string) {
       ${v.status_at ? ` · ${when(v.status_at)}` : ""}${v.status_note ? ` · ${v.status_note}` : ""}</div>` : ""}
     <div class="card invoice">
       <div class="row between" style="align-items:flex-start;flex-wrap:wrap">
-        <div><h1 style="margin:0">Alina Bun</h1><div class="muted small">Instagram @alina.bun_</div></div>
+        <div><h1 style="margin:0">Alina Bun</h1><div class="muted small">Instagram @${v.instagram}</div></div>
         <div style="text-align:right"><h2 style="margin:0">Invoice ${v.number}</h2><div>${fmtDate(v.invoice_date)}</div></div>
       </div>
       <p style="margin-top:var(--space-5)"><span class="muted">To</span><br><b>${v.shop_name}</b></p>

@@ -2,7 +2,8 @@
 import "./style.css";
 
 export const FUNCTIONS_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/store`;
-export const INSTAGRAM = { handle: "@alina.bun_", url: "https://ig.me/m/alina.bun_" };
+/** Instagram DM link for a handle (the handle comes from the server's settings). */
+export const igLink = (handle: string) => `https://ig.me/m/${encodeURIComponent(handle)}`;
 
 /** Calls the store function. Throws Error(message) with a human-readable message. */
 // deno-lint-ignore no-explicit-any

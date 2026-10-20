@@ -1,6 +1,6 @@
 // "/order/?t=<status token>" — the customer's receipt and payment page.
 import { compressImage, readText, uploadTo } from "./image.ts";
-import { $, api, copyBtn, html, INSTAGRAM, mvr, raw, type Raw, render } from "./lib.ts";
+import { $, api, copyBtn, html, igLink, mvr, raw, type Raw, render } from "./lib.ts";
 import { parseSlip, type Slip } from "./parse.ts";
 import { qrPngUrl, qrSvg } from "./qr.ts";
 
@@ -25,6 +25,7 @@ interface View {
   overpaid_mvr: string | null;
   fulfilment: "delivery" | "pickup";
   pickup_place: string | null;
+  instagram: string;
   pay_by: string | null;    // unpaid orders are cancelled after this
   late_upload: boolean;     // cancelled for not paying in time; a slip can still be sent
 }
@@ -112,7 +113,7 @@ function paint() {
       <p><b>Bookmark this page</b> to check your order later.</p>
       ${copyBtn(location.href, "Copy link to this page")}
       <p style="margin:var(--space-4) 0 0">Questions${waiting ? " or want to cancel" : ""}? Message us on Instagram
-        <a href="${INSTAGRAM.url}" target="_blank" rel="noopener">${INSTAGRAM.handle}</a> with your order ID <b>${v.public_id}</b>.</p>
+        <a href="${igLink(v.instagram)}" target="_blank" rel="noopener">@${v.instagram}</a> with your order ID <b>${v.public_id}</b>.</p>
     </div>
   `);
   wire();
