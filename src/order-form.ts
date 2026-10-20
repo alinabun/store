@@ -16,6 +16,7 @@ let products: Product[] = [];
 let dates: DeliveryDate[] = [];
 let pin: Pin | null = null;
 let pickupPlace = "";
+let cutoff = "8 pm"; // from the server's cutoff hour
 // deno-lint-ignore no-explicit-any
 let leaflet: any = null;
 
@@ -24,6 +25,9 @@ async function load() {
     let r;
     [{ products }, r] = await Promise.all([api("/catalog"), api("/delivery-dates")]);
     ({ dates, pickup_place: pickupPlace } = r);
+    const hr = Number(r.cutoff_hour);
+    cutoff = `${hr % 12 || 12} ${hr < 12 ? "am" : "pm"}`;
+    $("#intro").textContent = `Pre-order by ${cutoff} the day before. After that, you can still order our extra buns while they last.`;
   } catch (e) {
     render(app, html`<div class="notice bad">${(e as Error).message}</div><button onclick="location.reload()">Try again</button>`);
     return;
@@ -68,7 +72,7 @@ async function load() {
 
         <label for="phone">Phone number</label>
         <input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="7xx xxxx" value="${saved?.phone ?? ""}" required>
-        <div class="hint">A Maldives mobile number, so we can call you about the delivery.</div>
+        <div class="hint">A Maldives mobile number, so we can call you about your order.</div>
 
         <label>Delivery or pickup?</label>
         <div class="dates" role="radiogroup" aria-label="Delivery or pickup">
@@ -132,7 +136,7 @@ function refreshDay() {
   const d = day();
   $("#day-hint").textContent = !d ? "Sorry, nothing is available right now. Please check back later."
     : d.kind === "extras" ? `${d.label}: these are our extra buns, while they last.`
-    : `Pre-order for ${d.label}. Orders close at 8 pm the day before.`;
+    : `Pre-order for ${d.label}. Orders close at ${cutoff} the day before.`;
   for (const p of products) {
     const n = Math.min(MAX_PER_LINE, d?.products[p.id] ?? 0);
     if ((qty.get(p.id) ?? 0) > n) {

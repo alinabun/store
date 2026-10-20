@@ -29,7 +29,6 @@ interface View {
   late_upload: boolean;     // cancelled for not paying in time; a slip can still be sent
 }
 
-const OUR_ACCOUNT = "7730000565406";
 const token = new URLSearchParams(location.search).get("t") ?? "";
 const app = $("#app");
 let view: View;
@@ -153,8 +152,9 @@ function uploadBlock(v: View): Raw {
   if (ocr?.amount && Number(ocr.amount) !== Number(v.total_mvr)) {
     warnings.push(`Your screenshot seems to show ${mvr(ocr.amount)}, but your order is ${mvr(v.total_mvr)}.`);
   }
-  if (ocr?.toAccount && ocr.toAccount !== OUR_ACCOUNT) {
-    warnings.push(`Your screenshot seems to show a different account (${ocr.toAccount}). Ours is ${OUR_ACCOUNT}.`);
+  const ours = v.bank?.account_number;
+  if (ocr?.toAccount && ours && ocr.toAccount !== ours) {
+    warnings.push(`Your screenshot seems to show a different account (${ocr.toAccount}). Ours is ${ours}.`);
   }
   return html`
     <label class="upload">📷 ${slip.path ? "Choose a different screenshot" : "Upload screenshot"}
