@@ -16,7 +16,7 @@ let products: Product[] = [];
 let dates: DeliveryDate[] = [];
 let pin: Pin | null = null;
 let pickupPlace = "";
-let fee = 0; // laari; delivery fee for the current pin (0 in Malé)
+let fee = 0; // laari; delivery fee for the current pin
 interface Vessel { id: number; name: string; operator: string | null; vessel_type: string | null; location: string | null }
 let boat: Vessel | null = null;
 let cutoff = "8 pm"; // from the server's cutoff hour
@@ -197,13 +197,13 @@ function refreshDeliverTo() {
     : "Tap the map to put a pin on your home. Drag the pin to move it. The blue dot is where you are now.";
 }
 
-/** The server decides the fee (free in Malé); show it and add it to the total. */
+/** The server decides the fee (one for Malé, one for outside); show it and add it to the total. */
 async function quoteFee() {
   if (!pin) return;
   try {
     const r = await api<{ fee_mvr: string; in_male: boolean }>(`/delivery-fee?lat=${pin.lat}&lng=${pin.lng}`);
     fee = Math.round(Number(r.fee_mvr) * 100);
-    $("#fee-status").textContent = r.in_male ? "Free delivery in Malé." : `Outside Malé: delivery fee ${mvr(r.fee_mvr)}.`;
+    $("#fee-status").textContent = r.in_male ? `Delivery in Malé: ${mvr(r.fee_mvr)}.` : `Outside Malé: delivery fee ${mvr(r.fee_mvr)}.`;
   } catch {
     $("#fee-status").textContent = "";
   }

@@ -101,7 +101,7 @@ function paint() {
       <h2>Your order</h2>
       <table class="items">
         ${v.items.map((i) => html`<tr><td>${i.qty} × ${i.product_name}</td><td>${mvr(Number(i.unit_price) * i.qty)}</td></tr>`)}
-        ${Number(v.delivery_fee_mvr) > 0 ? html`<tr><td>Delivery (outside Malé)</td><td>${mvr(v.delivery_fee_mvr)}</td></tr>` : ""}
+        ${Number(v.delivery_fee_mvr) > 0 ? html`<tr><td>Delivery</td><td>${mvr(v.delivery_fee_mvr)}</td></tr>` : ""}
         <tr class="total"><td>Total</td><td>${mvr(v.total_mvr)}</td></tr>
       </table>
       <p style="margin-top:var(--space-4)"><b>${v.fulfilment === "pickup" ? "Pickup" : "Delivery"}:</b> ${v.delivery_label}<br>

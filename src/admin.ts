@@ -192,7 +192,7 @@ async function orderDetail(id: string) {
       <h2>Items</h2>
       <table class="items">
         ${o.items.map((i: Record<string, string>) => html`<tr><td>${i.qty} × ${i.product_name}</td><td>${mvr(Number(i.unit_price) * Number(i.qty))}</td></tr>`)}
-        ${Number(o.delivery_fee_mvr) > 0 ? html`<tr><td>Delivery (outside Malé)</td><td>${mvr(o.delivery_fee_mvr)}</td></tr>` : ""}
+        ${Number(o.delivery_fee_mvr) > 0 ? html`<tr><td>Delivery</td><td>${mvr(o.delivery_fee_mvr)}</td></tr>` : ""}
         <tr class="total"><td>Total</td><td>${mvr(o.total_mvr)}</td></tr>
       </table>
     </div>
@@ -318,6 +318,7 @@ async function days() {
         <label>Minutes to pay before an order is cancelled<input name="pay_within_minutes" type="number" min="5" step="1" value="${st.pay_within_minutes}"></label>
         <label>Pre-orders close at (hour, 24h, the day before)<input name="order_cutoff_hour" type="number" min="1" max="23" step="1" value="${st.order_cutoff_hour}"></label>
         <label>Instagram handle<input name="instagram" value="@${st.instagram}"></label>
+        <label>Delivery fee in Malé (MVR)<input name="delivery_fee_male_mvr" inputmode="decimal" value="${st.delivery_fee_male_mvr}"></label>
         <label>Delivery fee outside Malé (MVR)<input name="delivery_fee_outside_male_mvr" inputmode="decimal" value="${st.delivery_fee_outside_male_mvr}"></label>
       </div>
       <label>Pickup details (shown to customers who pick up)<textarea name="pickup_place" maxlength="300">${st.pickup_place}</textarea></label>
@@ -353,6 +354,7 @@ async function days() {
       await call("/admin/config", {
         preorder_max_buns: n("preorder_max_buns"), delivery_max_orders: n("delivery_max_orders"), pay_within_minutes: n("pay_within_minutes"),
         order_cutoff_hour: n("order_cutoff_hour"), instagram: (f.elements.namedItem("instagram") as HTMLInputElement).value,
+        delivery_fee_male_mvr: (f.elements.namedItem("delivery_fee_male_mvr") as HTMLInputElement).value,
         delivery_fee_outside_male_mvr: (f.elements.namedItem("delivery_fee_outside_male_mvr") as HTMLInputElement).value,
         pickup_place: (f.elements.namedItem("pickup_place") as HTMLTextAreaElement).value,
       });
