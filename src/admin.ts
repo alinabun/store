@@ -114,7 +114,7 @@ async function route() {
       case "invoices": return p.get("new") ? await newInvoice() : await invoices();
       case "customers": return await customers(p.get("sort") ?? "buns");
       case "products": return await products();
-      default: return await orders(p);
+      default: return p.get("new") ? await newOrder() : await orders(p);
     }
   } catch (e) {
     if (session) shell(p.get("tab") ?? "orders", html`<div class="notice bad">${(e as Error).message}</div>`);
@@ -132,6 +132,10 @@ async function orders(p: URLSearchParams) {
   const q = new URLSearchParams({ status: p.get("status") ?? "", date: p.get("date") ?? "", q: p.get("q") ?? "", review: p.get("review") ?? "", page: String(page) });
   const r = await call(`/admin/orders?${q}`);
   shell("orders", html`
+    <div class="row between" style="margin-bottom:var(--space-4)">
+      <p class="muted" style="margin:0">Taking an order on Instagram or the phone, or giving buns away? Enter it here so the buns are held.</p>
+      <button id="new-order">New order</button>
+    </div>
     <form class="filters" id="filters">
       <label>Search<input name="q" placeholder="AB-7K4Q or phone" value="${p.get("q") ?? ""}"></label>
       <label>Status<select name="status"><option value="">All</option>
@@ -148,7 +152,7 @@ async function orders(p: URLSearchParams) {
           <td>${o.customer_name}<div class="small muted">${o.phone}</div></td>
           <td>${o.delivery_date}</td>
           <td>${mvr(o.total_mvr)}<div class="small muted">${o.total_buns} buns</div></td>
-          <td>${chip(o.status)} ${o.fulfilment === "pickup" ? html`<span class="chip">pickup</span>` : ""} ${o.needs_review ? html`<span class="chip review">review</span>` : ""}</td>
+          <td>${chip(o.status)} ${o.fulfilment === "pickup" ? html`<span class="chip">pickup</span>` : ""} ${o.entered_by ? html`<span class="chip">by us</span>` : ""} ${o.needs_review ? html`<span class="chip review">review</span>` : ""}</td>
         </tr>`)}
     </table></div>
     ${r.orders.length ? "" : html`<p class="muted">No orders.</p>`}
@@ -162,9 +166,80 @@ async function orders(p: URLSearchParams) {
     const f = new FormData(e.target as HTMLFormElement);
     go({ tab: "orders", q: String(f.get("q") ?? ""), status: String(f.get("status") ?? ""), date: String(f.get("date") ?? ""), review: String(f.get("review") ?? "") });
   };
+  $("#new-order").onclick = () => go({ tab: "orders", new: "1" });
   app.querySelectorAll<HTMLElement>("tr[data-id]").forEach((tr) => (tr.onclick = () => go({ order: tr.dataset.id! })));
   $("#prev")?.addEventListener("click", () => go({ ...filters, page: String(page - 1) }));
   $("#next")?.addEventListener("click", () => go({ ...filters, page: String(page + 1) }));
+}
+
+/** An order taken by a manager (DM, phone, in person) or a giveaway. It holds buns like a customer order but never expires. */
+async function newOrder() {
+  type Day = { date: string; label: string; kind: string; available: boolean; closed: boolean; products: Record<string, number> };
+  const [{ products }, dd] = await Promise.all([api("/catalog"), api("/delivery-dates")]);
+  const days = (dd.dates as Day[]).filter((d) => d.available);
+  shell("orders", html`
+    <button class="secondary" id="back">← Orders</button>
+    <form class="card" id="no" style="margin-top:var(--space-4)">
+      <h1>New order</h1>
+      <div class="filters">
+        <label>Customer's name<input name="name" required maxlength="80"></label>
+        <label>Phone<input name="phone" type="tel" required placeholder="7xx xxxx"></label>
+        <label>Day<select name="delivery_date">${days.map((d) => html`<option value="${d.date}">${d.label}${d.kind === "extras" ? " (extras)" : ""}</option>`)}</select></label>
+      </div>
+      <div class="scroll"><table class="list" style="margin-top:var(--space-4)">
+        <tr><th>Bun</th><th>Price</th><th>Left</th><th>How many</th></tr>
+        ${(products as { id: string; name: string; price_mvr: string }[]).map((p) => html`<tr data-p="${p.id}"><td>${p.name}</td><td>${mvr(p.price_mvr)}</td>
+          <td class="left muted"></td><td><input name="qty" type="number" min="0" max="50" step="1" value="0" style="max-width:80px"></td></tr>`)}
+      </table></div>
+      <div class="filters" style="margin-top:var(--space-4)">
+        <label>Delivery or pickup<select name="fulfilment"><option value="delivery">Delivery</option><option value="pickup">Pickup</option></select></label>
+        <label class="deliv">Delivery fee (MVR)<input name="fee" inputmode="decimal" value="${dd.delivery_fee_male_mvr}"></label>
+      </div>
+      <p class="hint deliv">Malé is ${mvr(dd.delivery_fee_male_mvr)}, outside Malé ${mvr(dd.delivery_fee_outside_male_mvr)}.</p>
+      <label class="deliv">Where to deliver<textarea name="address" maxlength="500" placeholder="House, street, island; or the boat and time"></textarea></label>
+      <label>Notes <span class="muted">(optional)</span><textarea name="notes" maxlength="500"></textarea></label>
+      <label class="row" style="margin-top:var(--space-4)"><input type="checkbox" name="free" style="width:auto"> Give away (free, no payment)</label>
+      <label id="why" hidden>Who is it for? <span class="muted">(kept in the order's history)</span><input name="free_reason" maxlength="300" placeholder="e.g. tasting for a café"></label>
+      <div class="notice info" id="sum" style="margin-top:var(--space-4)"></div>
+      <div id="no-err"></div>
+      <button class="primary">Create order</button>
+    </form>`);
+  $("#back").onclick = () => go({ tab: "orders" });
+  const f = $<HTMLFormElement>("#no");
+  const rows = () => [...f.querySelectorAll<HTMLTableRowElement>("tr[data-p]")];
+  const items = () => rows().map((tr) => ({ product_id: tr.dataset.p!, qty: Number(tr.querySelector<HTMLInputElement>("[name=qty]")!.value || 0) })).filter((i) => i.qty > 0);
+  const refresh = () => {
+    const day = days.find((d) => d.date === f.delivery_date.value);
+    for (const tr of rows()) tr.querySelector(".left")!.textContent = String(day?.products[tr.dataset.p!] ?? 0);
+    const free = f.free.checked, deliv = f.fulfilment.value === "delivery";
+    $("#why").hidden = !free;
+    f.querySelectorAll<HTMLElement>(".deliv").forEach((el) => (el.hidden = !deliv));
+    const price = new Map((products as { id: string; price_mvr: string }[]).map((p) => [p.id, laari(p.price_mvr)]));
+    const buns = items().reduce((a, i) => a + i.qty, 0);
+    const total = free ? 0 : items().reduce((a, i) => a + (price.get(i.product_id) ?? 0) * i.qty, 0) + (deliv && buns ? laari(f.fee.value || "0") : 0);
+    render($("#sum"), html`${buns} buns · <b>${free ? "Free (giveaway)" : mvr(total / 100)}</b>${free ? "" : " · waits for payment until you mark it paid"}`);
+  };
+  f.addEventListener("input", refresh);
+  f.addEventListener("change", refresh);
+  refresh();
+  if (!days.length) render($("#no-err"), html`<div class="notice bad">No day is open for orders right now.</div>`);
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    const btn = f.querySelector<HTMLButtonElement>("button.primary")!;
+    btn.disabled = true;
+    try {
+      const deliv = f.fulfilment.value === "delivery";
+      const r = await call("/admin/create-order", {
+        name: (f.elements.namedItem("name") as HTMLInputElement).value, phone: f.phone.value, delivery_date: f.delivery_date.value, items: items(), fulfilment: f.fulfilment.value,
+        ...(deliv ? { address: f.address.value || null, delivery_fee_mvr: f.fee.value } : {}),
+        notes: f.notes.value || null, ...(f.free.checked ? { free: true, free_reason: f.free_reason.value } : {}),
+      });
+      go({ order: r.public_id });
+    } catch (err) {
+      render($("#no-err"), html`<div class="notice bad">${(err as Error).message}</div>`);
+      btn.disabled = false;
+    }
+  };
 }
 
 async function orderDetail(id: string) {
@@ -174,6 +249,8 @@ async function orderDetail(id: string) {
     <h1 style="margin-top:var(--space-4)">${o.public_id} ${chip(o.status)}</h1>
     ${o.needs_review ? html`<div class="notice bad"><b>Needs review:</b> ${o.review_reason}</div>` : ""}
     ${o.customer_message ? html`<div class="notice info small">Customer sees: ${o.customer_message}</div>` : ""}
+    ${o.entered_by ? html`<div class="notice info small">Entered by ${o.entered_by}.${o.status === "awaiting_payment"
+      ? " The buns are held until you mark it paid or cancel it; it doesn't expire. The customer can also pay with the link below." : ""}</div>` : ""}
     <div class="card">
       <h2>Actions</h2>
       <div class="actions">${o.actions.length ? o.actions.map((a: string) => html`<button data-action="${a}" class="${a === "cancel" || a === "reject_order" ? "secondary" : ""}">${ACTION_LABELS[a]}</button>`) : html`<span class="muted">None</span>`}</div>
