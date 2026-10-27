@@ -75,3 +75,12 @@ export function store<T>(key: string, value?: T): T | null {
   }
   return null;
 }
+
+/** Orders placed or opened on this phone, newest first, so a closed tab (e.g. Instagram's browser) isn't a lost order. */
+export interface SavedOrder { t: string; id: string }
+const ORDERS_KEY = "alinabun.orders";
+export const savedOrders = () => store<SavedOrder[]>(ORDERS_KEY) ?? [];
+export function rememberOrder(t: string, id: string) {
+  store(ORDERS_KEY, [{ t, id }, ...savedOrders().filter((o) => o.t !== t)].slice(0, 5));
+}
+export const forgetOrder = (t: string) => store(ORDERS_KEY, savedOrders().filter((o) => o.t !== t));

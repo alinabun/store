@@ -1,5 +1,5 @@
 // "/" — pick buns, a day, and details; the server re-prices everything.
-import { $, api, html, mvr, raw, render, store } from "./lib.ts";
+import { $, api, forgetOrder, html, mvr, raw, rememberOrder, render, savedOrders, store } from "./lib.ts";
 import { type Pin, pinPicker } from "./map.ts";
 
 interface Product { id: string; name: string; description: string | null; price_mvr: string; image_url: string | null }
@@ -39,6 +39,7 @@ async function load() {
   const firstOpen = dates.find((d) => d.available)?.date;
   pin = saved?.pin ?? null;
   render(app, html`
+    <div id="mine"></div>
     <form id="f" novalidate>
       <div class="card">
         <h2>Which day?</h2>
@@ -144,10 +145,54 @@ async function load() {
     if ((e.target as HTMLInputElement).name === "deliver_to") refreshDeliverTo();
   });
   refreshDay();
+  applyChange();
   wireBoatSearch();
+  showSavedOrders();
   if (pin) quoteFee();
   $("#go").onclick = () => $("#submit").scrollIntoView({ behavior: "smooth", block: "center" });
   $<HTMLFormElement>("#f").onsubmit = submit;
+}
+
+/** After "Change order": the cancelled order's day, buns, delivery choice and notes, as far as they're still available. */
+function applyChange() {
+  const c = store<{ date: string; items: { product_id: string; qty: number }[]; fulfilment: string; notes: string | null }>("alinabun.change");
+  if (!c) return;
+  store("alinabun.change", null);
+  const dateRadio = document.querySelector<HTMLInputElement>(`input[name=delivery_date][value="${c.date}"]`);
+  if (dateRadio && !dateRadio.disabled) dateRadio.checked = true;
+  const fRadio = document.querySelector<HTMLInputElement>(`input[name=fulfilment][value="${c.fulfilment}"]`);
+  if (fRadio && !fRadio.disabled) fRadio.checked = true;
+  refreshDay();
+  for (const i of c.items) {
+    const n = Math.min(i.qty, MAX_PER_LINE, day()?.products[i.product_id] ?? 0);
+    if (!products.some((p) => p.id === i.product_id) || !n) continue;
+    qty.set(i.product_id, n);
+    $(`#q-${i.product_id}`).textContent = String(n);
+  }
+  if (c.notes) $<HTMLTextAreaElement>("#notes").value = c.notes;
+  update();
+  render($("#mine"), html`<div class="notice info">Your last order was cancelled and filled in here. Change what you need, then place it again.</div>`);
+}
+
+/** Orders from this phone that are still open, so a closed browser tab doesn't lose them. */
+async function showSavedOrders() {
+  const LABEL: Record<string, string> = { awaiting_payment: "Waiting for your payment", awaiting_bank: "Checking your payment", paid: "Paid" };
+  const open: { t: string; id: string; label: string; day: string }[] = [];
+  for (const o of savedOrders()) {
+    try {
+      const v = await api<{ status: string; delivery_label: string }>(`/order-status?t=${encodeURIComponent(o.t)}`);
+      if (LABEL[v.status]) open.push({ ...o, label: LABEL[v.status], day: v.delivery_label });
+      else forgetOrder(o.t); // delivered, cancelled or rejected: nothing to come back to
+    } catch (e) {
+      if ((e as Error).message.includes("couldn't find")) forgetOrder(o.t); // other errors (offline): keep it
+    }
+  }
+  if (!open.length || $("#mine").childElementCount) return;
+  render($("#mine"), html`<div class="card">
+    <h2>Your order${open.length > 1 ? "s" : ""}</h2>
+    ${open.map((o) => html`<p class="row between" style="margin:var(--space-2) 0"><span><b>${o.id}</b> · ${o.day}<br><span class="small muted">${o.label}</span></span>
+      <a class="btn secondary-btn" href="/order/?t=${encodeURIComponent(o.t)}">View</a></p>`)}
+  </div>`);
 }
 
 const day = () => dates.find((d) => d.date === document.querySelector<HTMLInputElement>("input[name=delivery_date]:checked")?.value);
@@ -282,11 +327,12 @@ async function submit(e: SubmitEvent) {
   btn.disabled = true;
   btn.textContent = "Placing your order…";
   try {
-    const r = await api<{ status_token: string }>("/create-order", {
+    const r = await api<{ status_token: string; public_id: string }>("/create-order", {
       body: { name: get("name"), phone: get("phone"), fulfilment: fulfilment(), ...(fulfilment() === "delivery" && pin ? { lat: pin.lat, lng: pin.lng, address: get("address") || null } : {}),
         ...(toBoat ? { vessel_id: boat!.id, boat_time: $<HTMLInputElement>("#boat-time").value } : {}), notes: get("notes") || null, delivery_date: date.date, items },
     });
     store("alinabun.customer", { name: get("name"), phone: get("phone"), address: get("address"), pin });
+    rememberOrder(r.status_token, r.public_id);
     location.href = `/order/?t=${encodeURIComponent(r.status_token)}`;
   } catch (err) {
     showError((err as Error).message);

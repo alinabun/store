@@ -1,6 +1,6 @@
 // "/order/?t=<status token>" — the customer's receipt and payment page.
 import { compressImage, readText, uploadTo } from "./image.ts";
-import { $, api, copyBtn, html, igLink, mvr, raw, type Raw, render } from "./lib.ts";
+import { $, api, copyBtn, html, igLink, mvr, raw, type Raw, rememberOrder, render, store } from "./lib.ts";
 import { parseSlip, type Slip } from "./parse.ts";
 import { qrPngUrl, qrSvg } from "./qr.ts";
 
@@ -9,11 +9,12 @@ interface View {
   status: "awaiting_payment" | "awaiting_bank" | "paid" | "delivered" | "cancelled" | "rejected";
   customer_name: string;
   phone: string;
+  delivery_date: string;
   delivery_label: string;
   address: string | null;
   map_url: string | null;
   notes: string | null;
-  items: { product_name: string; qty: number; unit_price: string }[];
+  items: { product_id: string; product_name: string; qty: number; unit_price: string }[];
   total_mvr: string;
   message: string | null;
   payment_reference: string | null;
@@ -30,6 +31,7 @@ interface View {
   boat: { name: string; time: string | null } | null;
   pay_by: string | null;    // unpaid orders are cancelled after this
   late_upload: boolean;     // cancelled for not paying in time; a slip can still be sent
+  can_cancel: boolean;      // unpaid and no slip sent: the customer can change or cancel
 }
 
 const token = new URLSearchParams(location.search).get("t") ?? "";
@@ -45,6 +47,7 @@ const slip: { path: string | null; preview: string | null; ocr: Slip | null; rea
 async function load(quiet = false) {
   try {
     view = await api<View>(`/order-status?t=${encodeURIComponent(token)}`);
+    rememberOrder(token, view.public_id);
     paint();
   } catch (e) {
     if (!quiet) render(app, html`<div class="notice bad">${(e as Error).message}</div>`);
@@ -60,7 +63,7 @@ function headline(v: View): Raw {
         : html`<div class="notice warn"><b>We're checking your payment with the bank.</b> This usually takes up to 5 minutes. This page updates by itself.</div>`;
     case "paid": return html`<div class="notice ok"><b>Paid, see you on ${v.delivery_label}!</b></div>`;
     case "delivered": return html`<div class="notice ok"><b>Delivered.</b> Enjoy your buns!</div>`;
-    case "cancelled": return html`<div class="notice bad"><b>This order was cancelled.</b></div>`;
+    case "cancelled": return html`<div class="notice bad"><b>This order was cancelled.</b> <a href="/">Order again</a></div>`;
     case "rejected": return html`<div class="notice bad"><b>This order was not accepted.</b></div>`;
   }
 }
@@ -84,6 +87,12 @@ function paint() {
     ${v.pay_by ? html`<div class="notice warn small">Please pay by <b>${new Date(v.pay_by).toLocaleTimeString("en-GB", { timeZone: "Indian/Maldives", hour: "2-digit", minute: "2-digit" })}</b>.
       After that the order is cancelled and the buns go back on sale.</div>` : ""}
     ${v.status === "awaiting_payment" && !v.on_hold ? payBlock(v) : ""}
+    ${v.can_cancel ? html`
+      <div class="card">
+        <p style="margin-top:0"><b>Need to change something?</b> You can change or cancel this order until you send your payment.</p>
+        <div class="row"><button class="secondary" id="change">Change order</button><button class="secondary" id="cancel">Cancel order</button></div>
+        <div id="cancel-err"></div>
+      </div>` : ""}
     ${v.late_upload ? html`<div class="card"><p><b>Already paid?</b> Upload the screenshot and we'll check it.</p>${uploadBlock(v)}</div>` : ""}
     ${v.on_hold ? html`
       <div class="card">
@@ -114,9 +123,9 @@ function paint() {
     </div>
 
     <div class="card small">
-      <p><b>Bookmark this page</b> to check your order later.</p>
+      <p><b>Bookmark this page</b> to check your order later. It's also saved on this phone: open store.alinabun.com to find it again.</p>
       ${copyBtn(location.href, "Copy link to this page")}
-      <p style="margin:var(--space-4) 0 0">Questions${waiting ? " or want to cancel" : ""}? Message us on Instagram
+      <p style="margin:var(--space-4) 0 0">Questions${waiting && !v.can_cancel ? " or want to cancel" : ""}? Message us on Instagram
         <a href="${igLink(v.instagram)}" target="_blank" rel="noopener">@${v.instagram}</a> with your order ID <b>${v.public_id}</b>.</p>
     </div>
   `);
@@ -184,6 +193,9 @@ function uploadBlock(v: View): Raw {
 }
 
 function wire() {
+  const cancel = $<HTMLButtonElement>("#cancel"), change = $<HTMLButtonElement>("#change");
+  if (cancel) cancel.onclick = () => cancelOrder(false);
+  if (change) change.onclick = () => cancelOrder(true);
   const file = $<HTMLInputElement>("#file");
   if (file) file.onchange = () => file.files?.[0] && pick(file.files[0]);
   const send = $<HTMLButtonElement>("#send");
@@ -202,6 +214,28 @@ function wire() {
         check.textContent = (e as Error).message;
       }
     };
+  }
+}
+
+/** Cancel; for "change", the order form opens with the same buns, day and details filled in. */
+async function cancelOrder(change: boolean) {
+  const v = view;
+  if (!confirm(change
+    ? `Change your order? We'll cancel ${v.public_id} and take you back to the order form with your choices filled in.`
+    : `Cancel order ${v.public_id}? Your buns go back on sale.`)) return;
+  for (const b of ["#cancel", "#change"]) $<HTMLButtonElement>(b).disabled = true;
+  try {
+    view = await api<View>("/cancel-order", { body: { t: token } });
+    if (change) {
+      store("alinabun.change", { date: v.delivery_date, items: v.items.map((i) => ({ product_id: i.product_id, qty: i.qty })), fulfilment: v.fulfilment, notes: v.notes });
+      location.href = "/";
+      return;
+    }
+    paint();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  } catch (e) {
+    render($("#cancel-err"), html`<div class="notice bad" style="margin-top:var(--space-3)">${(e as Error).message}</div>`);
+    for (const b of ["#cancel", "#change"]) $<HTMLButtonElement>(b).disabled = false;
   }
 }
 
