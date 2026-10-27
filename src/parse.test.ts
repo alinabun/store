@@ -1,6 +1,6 @@
 // deno test src/
 import assert from "node:assert/strict";
-import { parseSlip } from "./parse.ts";
+import { parseMibSlip, parseSlip } from "./parse.ts";
 
 // Roughly what Tesseract returns for a BML slip.
 const SLIP = `Thank you. Transfer transaction is successful.
@@ -36,4 +36,17 @@ Deno.test("amounts with thousands separators, and fallback without an Amount row
 Deno.test("nothing recognisable", () => {
   assert.deepEqual(parseSlip("a cat photo"), { reference: null, amount: null, date: null, toAccount: null });
   assert.equal(parseSlip("Reference BLAZ12345").reference, null); // too short
+});
+
+// The two MIB receipt layouts as Tesseract reads them (made-up sender, same shape as real receipts).
+const MIB_REQUEST = `NM\n\nId#\n\nFrom\n\nTo\n\nBank\nCreated Date\n\nStatus Date\n\nES\n\n800000001\n\n90100000000000456\nMariyam Hassan\n\n7730000565406\nESHAN SHAFEEQ\n\nBML\n2026-10-27 10:38:37\n\n2026-10-27 10:38:37\n\n@) MALDIVES ISLAMIC BANK`;
+const MIB_RECEIPT = `TRANSACTION RECEIPT\ni\n\nSUCCESSFUL\n\n>\n\nAisha N. Eshan Shafeeq\n\nTOTAL AMOUNT\n\n800000002\n7730000565406\n\nBank of Maldives PLC\nOct 27, 2026 at 12:32 PM\n\ncheck01\n\n(@) MALDIVES ISLAMIC BANK`;
+
+Deno.test("MIB receipts", () => {
+  assert.deepEqual(parseMibSlip(MIB_REQUEST), { sentAt: "2026-10-27T10:38:37", fromName: "Mariyam Hassan", fromAccount: "90100000000000456" });
+  assert.deepEqual(parseMibSlip(MIB_RECEIPT), { sentAt: "2026-10-27T12:32", fromName: "Aisha N.", fromAccount: null });
+  assert.equal(parseMibSlip(MIB_RECEIPT, "ESHAN SHAFEEQ")?.fromName, "Aisha N.", "receiver name in any case");
+  assert.equal(parseMibSlip("Oct 27, 2026 at 12:05 AM islamic bank")?.sentAt, "2026-10-27T00:05");
+  assert.equal(parseMibSlip(SLIP), null); // a BML slip
+  assert.equal(parseSlip(MIB_RECEIPT).toAccount, "7730000565406");
 });

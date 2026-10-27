@@ -35,3 +35,34 @@ export function parseSlip(text: unknown): Slip {
 
   return { reference, amount, date, toAccount };
 }
+
+const MONTHS: Record<string, number> = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+const pad = (n: number | string) => String(n).padStart(2, "0");
+
+export interface MibSlip { sentAt: string | null; fromName: string | null; fromAccount: string | null }
+
+// OCR text of an MIB (other bank, via Favara) receipt → {sentAt, fromName, fromAccount}, or null if it isn't one.
+// Copied from BMLPayments/testshop/parse.js (keep in sync). Two layouts: "Favara request transfer"
+// (Created Date 2026-10-27 10:38:37, From <account> <name>) and "Transaction receipt" (Oct 27, 2026 at 12:39 PM,
+// the sender's name next to the receiver's, no account). `receiver` is our account holder's name as printed.
+export function parseMibSlip(text: unknown, receiver = "Eshan Shafeeq"): MibSlip | null {
+  const t = String(text ?? "").replace(/\r/g, "");
+  if (!/islamic\s*bank|favara/i.test(t)) return null;
+  let sentAt: string | null = null;
+  const iso = t.match(/(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}(?::\d{2})?)/);
+  const us = t.match(/\b([A-Z][a-z]{2})[a-z]*\.?\s+(\d{1,2}),\s*(\d{4})\s+at\s+(\d{1,2}):(\d{2})\s*([AP]M)/i);
+  if (iso) sentAt = `${iso[1]}T${iso[2]}`;
+  else if (us && MONTHS[us[1].toLowerCase()]) {
+    const h = (Number(us[4]) % 12) + (us[6].toUpperCase() === "PM" ? 12 : 0);
+    sentAt = `${us[3]}-${pad(MONTHS[us[1].toLowerCase()])}-${pad(us[2])}T${pad(h)}:${us[5]}`;
+  }
+  // MIB accounts are 17 digits starting with 9; the receiver's BML account starts with 7.
+  const fromAccount = t.match(/\b9\d{16}\b/)?.[0] ?? null;
+  let fromName: string | null = null;
+  if (fromAccount) fromName = t.slice(t.indexOf(fromAccount) + fromAccount.length).match(/^\s*([A-Za-z][A-Za-z .'-]+)/)?.[1].trim() ?? null;
+  else {
+    const esc = receiver.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    fromName = t.match(new RegExp(`^\\s*([A-Za-z][A-Za-z .'-]*?)\\s*(?:→|->|>)?\\s*${esc}\\s*$`, "im"))?.[1].trim() || null;
+  }
+  return { sentAt, fromName, fromAccount };
+}

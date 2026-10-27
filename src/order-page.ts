@@ -1,7 +1,7 @@
 // "/order/?t=<status token>" — the customer's receipt and payment page.
 import { compressImage, readText, uploadTo } from "./image.ts";
 import { $, api, copyBtn, html, igLink, mvr, raw, type Raw, rememberOrder, render, store } from "./lib.ts";
-import { parseSlip, type Slip } from "./parse.ts";
+import { type MibSlip, parseMibSlip, parseSlip, type Slip } from "./parse.ts";
 import { qrPngUrl, qrSvg } from "./qr.ts";
 
 interface View {
@@ -41,8 +41,11 @@ let poll: number | undefined;
 let pollUntil = 0;
 
 // The slip being sent: uploaded path + what OCR read. Survives re-renders.
-const slip: { path: string | null; preview: string | null; ocr: Slip | null; reading: boolean; uploading: boolean; error: string | null } =
-  { path: null, preview: null, ocr: null, reading: false, uploading: false, error: null };
+// bank: a BML slip has a BLAZ reference; an MIB receipt doesn't, so the customer confirms its time and sender instead.
+const slip: {
+  path: string | null; preview: string | null; ocr: Slip | null; mib: MibSlip | null; bank: "bml" | "mib";
+  reading: boolean; uploading: boolean; error: string | null;
+} = { path: null, preview: null, ocr: null, mib: null, bank: "bml", reading: false, uploading: false, error: null };
 
 async function load(quiet = false) {
   try {
@@ -101,7 +104,7 @@ function paint() {
       </div>` : ""}
     ${v.status === "awaiting_bank" ? html`
       <div class="card">
-        <div class="kv"><span>Payment reference</span><b>${v.payment_reference}</b></div>
+        <div class="kv"><span>Payment</span><b>${v.payment_reference}</b></div>
         <button class="secondary" id="check" style="width:100%;margin-top:var(--space-3)">Check again</button>
         <details style="margin-top:var(--space-4)"><summary>Uploaded the wrong screenshot?</summary>${uploadBlock(v)}</details>
       </div>` : ""}
@@ -155,7 +158,7 @@ function payBlock(v: View): Raw {
             </div>` : ""}
         </li>
         <li><p>Take a screenshot of the payment confirmation.</p></li>
-        <li><p>Upload the screenshot here.</p>${uploadBlock(v)}</li>
+        <li><p>Upload the screenshot here. Paid from MIB? That works too.</p>${uploadBlock(v)}</li>
       </ol>
     </div>`;
 }
@@ -177,13 +180,15 @@ function uploadBlock(v: View): Raw {
     ${slip.uploading ? html`<p class="muted small">Uploading…</p>` : ""}
     ${slip.error ? html`<div class="notice bad" style="margin-top:var(--space-3)">${slip.error}</div>` : ""}
     ${slip.path ? html`
-      <div class="row" style="margin-top:var(--space-3)">
+      <div class="row" style="margin-top:var(--space-3);align-items:flex-start;flex-wrap:wrap">
         ${slip.preview ? html`<img class="slip-preview" src="${slip.preview}" alt="Your screenshot">` : ""}
-        <div class="grow">
+        <div class="grow" style="min-width:min(100%, 230px)">
+          ${slip.bank === "mib" ? mibFields() : html`
           <label for="ref" style="margin-top:0">Reference number</label>
           <input id="ref" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="BLAZ…"
             value="${ocr?.reference ?? (document.querySelector<HTMLInputElement>("#ref")?.value ?? "")}">
-          <div class="hint">${slip.reading ? "Reading your screenshot…" : raw("On your screenshot, next to <b>Reference</b>. It starts with BLAZ.")}</div>
+          <div class="hint">${slip.reading ? "Reading your screenshot…" : raw("On your screenshot, next to <b>Reference</b>. It starts with BLAZ.")}</div>`}
+          <button type="button" class="copy" id="bank-switch" style="margin-top:var(--space-2)">${slip.bank === "mib" ? "Paid from BML instead?" : "Paid from MIB?"}</button>
         </div>
       </div>
       ${warnings.map((w) => html`<div class="notice warn small" style="margin-top:var(--space-3)">${w} You can still send it; we check every payment with the bank.</div>`)}
@@ -192,7 +197,28 @@ function uploadBlock(v: View): Raw {
   `;
 }
 
+/** MIB receipts have no BML reference: the bank is matched on when the money was sent and who sent it. */
+function mibFields(): Raw {
+  const m = slip.mib;
+  return html`
+    <p class="small" style="margin-top:0"><b>Paid from MIB.</b> Please check these match your receipt. We use them to find your payment.</p>
+    <label for="mib-at" style="margin-top:0">Date and time on the receipt</label>
+    <input id="mib-at" type="datetime-local" step="1" value="${m?.sentAt ?? ""}">
+    <label for="mib-name">Sender's name, as on the receipt</label>
+    <input id="mib-name" autocomplete="off" value="${m?.fromName ?? ""}" placeholder="e.g. Aisha N.">
+    <label for="mib-acct">Sender's account <span class="muted">(if the receipt shows it)</span></label>
+    <input id="mib-acct" inputmode="numeric" autocomplete="off" value="${m?.fromAccount ?? ""}" placeholder="9…">
+    ${slip.reading ? html`<div class="hint">Reading your screenshot…</div>` : ""}`;
+}
+
 function wire() {
+  // Keep what the customer types in the MIB fields across repaints.
+  for (const [sel, key] of [["#mib-at", "sentAt"], ["#mib-name", "fromName"], ["#mib-acct", "fromAccount"]] as const) {
+    const el = $<HTMLInputElement>(sel);
+    if (el) el.oninput = () => (slip.mib = { sentAt: null, fromName: null, fromAccount: null, ...slip.mib, [key]: el.value || null });
+  }
+  const sw = $<HTMLButtonElement>("#bank-switch");
+  if (sw) sw.onclick = () => { slip.bank = slip.bank === "mib" ? "bml" : "mib"; paint(); };
   const cancel = $<HTMLButtonElement>("#cancel"), change = $<HTMLButtonElement>("#change");
   if (cancel) cancel.onclick = () => cancelOrder(false);
   if (change) change.onclick = () => cancelOrder(true);
@@ -245,11 +271,19 @@ async function pick(file: File) {
     return paint();
   }
   if (slip.preview) URL.revokeObjectURL(slip.preview);
-  Object.assign(slip, { path: null, ocr: null, error: null, uploading: true, reading: true, preview: URL.createObjectURL(file) });
+  Object.assign(slip, { path: null, ocr: null, mib: null, bank: "bml", error: null, uploading: true, reading: true, preview: URL.createObjectURL(file) });
   paint();
   const blob = await compressImage(file);
   // Upload and OCR run side by side; the customer can type the reference while OCR works.
-  readText(blob).then((t) => (slip.ocr = parseSlip(t))).catch(() => {}).finally(() => {
+  readText(blob).then((t) => {
+    slip.ocr = parseSlip(t);
+    // An MIB receipt: switch to its fields, unless the customer already typed something there.
+    const mib = parseMibSlip(t, view.bank?.account_name);
+    if (mib && !slip.ocr.reference) {
+      slip.bank = "mib";
+      slip.mib ??= mib;
+    }
+  }).catch(() => {}).finally(() => {
     slip.reading = false;
     // Don't overwrite what the customer has typed in the meantime.
     const typed = document.querySelector<HTMLInputElement>("#ref")?.value.trim();
@@ -271,15 +305,25 @@ async function pick(file: File) {
 }
 
 async function submit() {
-  const reference = $<HTMLInputElement>("#ref").value.replace(/\s+/g, "").toUpperCase();
   const err = (m: string) => render($("#send-err"), html`<div class="notice bad" style="margin-top:var(--space-3)">${m}</div>`);
-  if (!/^BLAZ\d{12}$/.test(reference)) return err("Please check the reference number. It starts with BLAZ followed by 12 numbers.");
+  let pay: Record<string, unknown>;
+  if (slip.bank === "mib") {
+    const at = $<HTMLInputElement>("#mib-at").value, name = $<HTMLInputElement>("#mib-name").value.trim();
+    const acct = $<HTMLInputElement>("#mib-acct").value.replace(/\s+/g, "");
+    if (!at) return err("Please enter the date and time on your receipt.");
+    if (!name && !acct) return err("Please enter the sender's name as it shows on your receipt.");
+    pay = { mib: { sent_at: at, ...(name ? { from_name: name } : {}), ...(acct ? { from_account: acct } : {}) } };
+  } else {
+    const reference = $<HTMLInputElement>("#ref").value.replace(/\s+/g, "").toUpperCase();
+    if (!/^BLAZ\d{12}$/.test(reference)) return err("Please check the reference number. It starts with BLAZ followed by 12 numbers.");
+    pay = { reference };
+  }
   const btn = $<HTMLButtonElement>("#send");
   btn.disabled = true;
   btn.textContent = "Sending…";
   try {
-    view = await api<View>("/submit-payment", { body: { t: token, path: slip.path, reference } });
-    Object.assign(slip, { path: null, ocr: null, preview: null, error: null });
+    view = await api<View>("/submit-payment", { body: { t: token, path: slip.path, ...pay } });
+    Object.assign(slip, { path: null, ocr: null, mib: null, bank: "bml", preview: null, error: null });
     pollUntil = Date.now() + 10 * 60_000;
     paint();
     window.scrollTo({ top: 0, behavior: "smooth" });
