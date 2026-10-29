@@ -356,6 +356,14 @@ async function production(date: string) {
       <button>Save baking plan</button>
       <span class="small muted grow">Same plan as the Telegram bot's /plan; Baked comes from /batch. Extras left = the higher of the two, minus all orders.</span>
     </div></form>
+    <form id="more" style="margin-top:var(--space-4)">
+      <h3>Add buns just made</h3>
+      <p class="small muted">How many more came out? They go on top of what's there now, so customers can order them straight away.</p>
+      <div class="row" style="flex-wrap:wrap">
+        ${rows.filter((p) => p.linked).map((p) => html`<label>${p.product_name}<input name="${p.product_id}" type="number" min="1" step="1" placeholder="0" style="max-width:80px"></label>`)}
+        <button>Add</button>
+      </div>
+    </form>
     <div id="prod-msg"></div>
     <p class="small muted" style="margin-top:var(--space-3)">Paid = paid or delivered. Checking = waiting for the bank. Cancelled and rejected orders are left out.</p>`);
   const msg = (m: string, ok = false) => render($("#prod-msg"), html`<div class="notice ${ok ? "ok" : "bad"} small" style="margin-top:var(--space-3)">${m}</div>`);
@@ -371,6 +379,23 @@ async function production(date: string) {
       await call("/admin/plan", { date, lines });
       await production(date);
       msg("Baking plan saved. Customers can now order the extras.", true);
+    } catch (err) {
+      msg((err as Error).message);
+    }
+  };
+  $<HTMLFormElement>("#more").onsubmit = async (e) => {
+    e.preventDefault();
+    // On top of the higher of planned and baked: that's what the stock is counted from.
+    const lines = [...(e.target as HTMLFormElement).querySelectorAll<HTMLInputElement>("input[type=number]")]
+      .filter((i) => Number(i.value) > 0).map((i) => {
+        const p = rows.find((r) => r.product_id === i.name)!;
+        return { product_id: i.name, qty: Math.max(p.planned ?? 0, p.baked) + Math.floor(Number(i.value)) };
+      });
+    if (!lines.length) return msg("Enter how many more of a bun you made.");
+    try {
+      await call("/admin/plan", { date, lines });
+      await production(date);
+      msg("Added. Customers can order them now.", true);
     } catch (err) {
       msg((err as Error).message);
     }

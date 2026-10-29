@@ -99,7 +99,7 @@ async function load() {
             <input id="boat-time" type="time">
           </div>
           <label id="pin-label">Where should we deliver?</label>
-          <p class="hint" id="pin-hint">Tap the map to put a pin on your home. Drag the pin to move it. The blue dot is where you are now.</p>
+          <p class="hint" id="pin-hint">We deliver in Malé, Hulhulé and Hulhumalé. Tap the map to put a pin on your home. Drag the pin to move it. The blue dot is where you are now.</p>
           <div id="map" class="map" aria-label="Map: tap to put your delivery pin"></div>
           <div class="hint" id="pin-status">${saved?.pin ? "Pin from your last order. Move it if you're somewhere else." : "No pin yet."}</div>
           <div class="hint" id="fee-status"></div>
@@ -239,7 +239,7 @@ function refreshDeliverTo() {
   $("#pin-label").textContent = toBoat ? "Where will the boat be?" : "Where should we deliver?";
   $("#pin-hint").textContent = toBoat
     ? "Tap the map where the boat will be (the jetty or harbour). Drag the pin to move it."
-    : "Tap the map to put a pin on your home. Drag the pin to move it. The blue dot is where you are now.";
+    : "We deliver in Malé, Hulhulé and Hulhumalé. Tap the map to put a pin on your home. Drag the pin to move it. The blue dot is where you are now.";
 }
 
 /** The server decides the fee (one for Malé, one for outside); show it and add it to the total. */
@@ -249,8 +249,8 @@ async function quoteFee() {
     const r = await api<{ fee_mvr: string; in_male: boolean }>(`/delivery-fee?lat=${pin.lat}&lng=${pin.lng}`);
     fee = Math.round(Number(r.fee_mvr) * 100);
     $("#fee-status").textContent = r.in_male ? `Delivery in Malé: ${mvr(r.fee_mvr)}.` : `Outside Malé: delivery fee ${mvr(r.fee_mvr)}.`;
-  } catch {
-    $("#fee-status").textContent = "";
+  } catch (e) {
+    $("#fee-status").textContent = (e as Error).message; // e.g. outside the delivery area
   }
   update();
 }
