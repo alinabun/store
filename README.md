@@ -59,6 +59,12 @@ permanent copy: search the order ID in the slips group.
   - **Cancel** (reason shown to the customer)
   - **Reject order** (fake orders)
   - **Clear review flag** (after you've refunded an overpayment, etc.)
+- **Sales** (`/admin/?tab=sales&date=`): a day (default today) against the same weekday a week before: buns sold,
+  revenue, orders, left over, not paid yet, per bun. Its month so far against the same days of the month before:
+  the same numbers plus customers (new / came back), each day (sold, given away or not paid, left over), buns
+  (sold out on how many days), average per weekday, where sales come from (website, Instagram and phone, shops),
+  payments not made or not through, and month by month. Sold = paid orders by delivery day and paid shop invoices
+  by invoice day; made = the higher of the baking plan and the bot's batches.
 - **Production**: per bun for a day: the baking plan (editable here, or with /plan in the Telegram bot; both write
   the same plan), baked so far (bot /batch), pre-orders, extras sold, extras left, and paid / checking / not paid.
   Also the pre-order limit per day. The per-flavour limit is on each product.

@@ -93,7 +93,7 @@ addEventListener("popstate", () => route());
 function shell(tab: string, body: Raw) {
   render(app, html`
     <nav class="tabs">
-      ${[["orders", "Orders"], ["production", "Production"], ["days", "Days"], ["invoices", "Invoices"], ["customers", "Customers"], ["products", "Products"]].map(([k, l]) =>
+      ${[["orders", "Orders"], ["sales", "Sales"], ["production", "Production"], ["days", "Days"], ["invoices", "Invoices"], ["customers", "Customers"], ["products", "Products"]].map(([k, l]) =>
         html`<button class="${tab === k ? "on" : ""}" data-tab="${k}">${l}</button>`)}
       <button class="secondary" id="out" style="margin-left:auto">Sign out</button>
     </nav>
@@ -109,6 +109,7 @@ async function route() {
     if (p.get("order")) return await orderDetail(p.get("order")!);
     if (p.get("invoice")) return await invoiceView(p.get("invoice")!);
     switch (p.get("tab")) {
+      case "sales": return await sales(p.get("date") ?? "");
       case "production": return await production(p.get("date") ?? "");
       case "days": return await days();
       case "invoices": return p.get("new") ? await newInvoice() : await invoices();
@@ -652,6 +653,226 @@ async function customers(sort: string) {
       ${r.customers.map((c: Record<string, string>) => html`<tr><td>${c.phone}</td><td>${c.name}</td><td>${c.paid_orders}</td><td><b>${c.buns_bought}</b></td><td>${when(c.last_paid_at)}</td></tr>`)}
     </table></div>`);
   $<HTMLSelectElement>("#sort").onchange = (e) => go({ tab: "customers", sort: (e.target as HTMLSelectElement).value });
+}
+
+// ── Sales ──
+
+// deno-lint-ignore no-explicit-any
+type Sales = any; // GET /admin/sales (store function, rules.ts salesReport)
+interface BunStack { sold: number; given: number; unpaid: number; left: number }
+const num = (x: number) => x.toLocaleString("en-GB");
+const money = (x: number) => `MVR ${x.toLocaleString("en-GB", Number.isInteger(x) ? {} : { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const pct = (part: number, whole: number) => (whole ? Math.round((part / whole) * 100) : 0);
+const utc = (d: string, o: Intl.DateTimeFormatOptions) => new Date(`${d}T00:00:00Z`).toLocaleDateString("en-GB", { ...o, timeZone: "UTC" });
+const dayName = (d: string) => utc(d, { weekday: "short", day: "numeric", month: "short" });
+const monthName = (m: string, month: "long" | "short" = "long") => utc(`${m}-01`, { month, year: "numeric" });
+const span = ([a, b]: string[]) => `${Number(a.slice(8))}${a === b ? "" : `–${Number(b.slice(8))}`} ${utc(a, { month: "short" })}`;
+
+/** ▲/▼ against an earlier period, in the good or bad colour; nothing when there's nothing to compare with. */
+function change(cur: number, prev: number, upIsGood = true) {
+  if (!prev) return "";
+  const p = Math.round(((cur - prev) / prev) * 100);
+  if (!p) return html`<small class="muted">no change</small>`;
+  return html`<small class="${(p > 0) === upIsGood ? "up" : "down"}">${p > 0 ? "▲" : "▼"} ${Math.abs(p)}%</small>`;
+}
+const tile = (label: string, value: string, sub: unknown = "", delta: unknown = "") =>
+  html`<div class="kpi"><span>${label}</span><b>${value}</b>${delta}${sub ? html`<small>${sub}</small>` : ""}</div>`;
+const LEGEND = html`<div class="legend small"><span><i class="v-sold"></i>Sold</span><span><i class="v-other"></i>Given away or not paid</span><span><i class="v-left"></i>Left over</span></div>`;
+const out = (b: BunStack) => b.sold + b.given + b.unpaid;
+/** One bar: sold, then given away or not paid, then left over; `max` is the longest bar's made (or out). */
+function stack(b: BunStack, max: number) {
+  const parts: [number, string][] = [[b.sold, "v-sold"], [b.given + b.unpaid, "v-other"], [b.left, "v-left"]];
+  return html`<div class="hbar">${parts.filter(([v]) => v > 0).map(([v, c]) => html`<i class="${c}" style="width:${(v / max) * 100}%"></i>`)}</div>`;
+}
+
+// One tooltip for every chart mark with data-tip, on hover and keyboard focus. Plain text, so names can't inject HTML.
+const tipBox = document.body.appendChild(Object.assign(document.createElement("div"), { className: "tip", hidden: true }));
+function showTip(e: Event) {
+  const el = (e.target as Element).closest?.("[data-tip]");
+  tipBox.hidden = !el;
+  if (!el) return;
+  tipBox.textContent = el.getAttribute("data-tip");
+  const b = el.getBoundingClientRect();
+  tipBox.style.left = `${Math.max(8, Math.min(b.left + b.width / 2 - tipBox.offsetWidth / 2, innerWidth - tipBox.offsetWidth - 8))}px`;
+  tipBox.style.top = `${Math.max(8, b.top - tipBox.offsetHeight - 6)}px`;
+}
+document.addEventListener("pointerover", showTip);
+document.addEventListener("focusin", showTip);
+addEventListener("scroll", () => (tipBox.hidden = true), { passive: true });
+
+async function sales(date: string) {
+  const r: Sales = await call(`/admin/sales${date ? `?day=${date}` : ""}`);
+  tipBox.hidden = true;
+  const t = r.day_totals, lw = r.last_week, m = r.totals, pm = r.prev;
+  const isToday = r.day === r.today;
+  const dayMax = Math.max(1, ...r.day_buns.map((b: BunStack) => out(b) + b.left));
+  const bunMax = Math.max(1, ...r.buns.map((b: BunStack) => out(b) + b.left));
+  const weekMax = Math.max(1, ...r.weekdays.map((w: { avg: number | null }) => w.avg ?? 0));
+  const monthMax = Math.max(1, ...r.months.map((x: { revenue: number }) => x.revenue));
+  const orderAvg = (x: Sales) => (x.orders ? (x.revenue - x.shop_revenue) / x.orders : 0);
+  const mix: [string, number][] = [["Website", m.web], ["Instagram and phone (entered by managers)", m.manager], ["Shops", m.shop]];
+  shell("sales", html`
+    <div class="filters">
+      <label>Day<input type="date" id="d" value="${r.day}" max="${r.today}"></label>
+      ${isToday ? "" : html`<button class="secondary" id="today" type="button">Today</button>`}
+    </div>
+
+    <h2>${r.label}${isToday ? " · today" : ""}</h2>
+    <p class="small muted">Arrows compare with ${dayName(lw.day)}, a week before. Orders count on their delivery day.</p>
+    <div class="kpis">
+      ${tile("Buns sold", num(t.sold), t.given ? `+ ${t.given} given away` : "", change(t.sold, lw.sold))}
+      ${tile("Revenue", money(t.revenue), t.fees ? `incl. ${money(t.fees)} delivery` : "", change(t.revenue, lw.revenue))}
+      ${tile("Orders", num(t.orders), t.orders ? `avg ${money(orderAvg(t))}` : "", change(t.orders, lw.orders))}
+      ${tile("Left over", t.made ? num(t.left) : "–", t.made ? (t.left ? `${pct(t.left, t.made)}% of ${t.made} made` : `all ${t.made} made went out`) : "nothing planned or baked")}
+      ${t.unpaid || t.unpaid_mvr ? tile("Not paid yet", money(t.unpaid_mvr), `${t.unpaid} buns`) : ""}
+    </div>
+    ${r.day_buns.length ? html`<div class="scroll"><table class="list">
+      <tr><th>Bun</th><th>Made</th><th>Sold</th><th>Given away</th><th>Not paid</th><th>Left</th><th>Revenue</th><th class="wide-only" style="width:30%"></th></tr>
+      ${r.day_buns.map((b: Sales) => html`<tr><td>${b.name}</td><td>${b.made || "–"}</td><td><b>${b.sold}</b></td><td>${b.given}</td><td>${b.unpaid}</td>
+        <td>${b.made && !b.left ? html`<span class="chip review">sold out</span>` : b.left}</td><td>${money(b.revenue)}</td><td class="wide-only">${stack(b, dayMax)}</td></tr>`)}
+    </table></div><div class="wide-only">${LEGEND}</div>` : html`<p class="muted">Nothing made or sold this day.</p>`}
+
+    <h2 style="margin-top:var(--space-6)">${monthName(r.month)}</h2>
+    <p class="small muted">${span(r.range)}, arrows compare with ${span(r.prev_range)}.</p>
+    <div class="kpis">
+      ${tile("Buns sold", num(m.sold), m.given ? `+ ${m.given} given away` : "", change(m.sold, pm.sold))}
+      ${tile("Revenue", money(m.revenue), m.fees ? `incl. ${money(m.fees)} delivery` : "", change(m.revenue, pm.revenue))}
+      ${tile("Orders", num(m.orders), m.orders ? `avg ${money(orderAvg(m))}` : "", change(m.orders, pm.orders))}
+      ${tile("Customers", num(m.customers), `${m.new_customers} new, ${m.customers - m.new_customers} came back`, change(m.customers, pm.customers))}
+      ${tile("Left over", m.made ? num(m.left) : "–", m.made ? `${pct(m.left, m.made)}% of ${num(m.made)} made` : "", change(m.left, pm.left, false))}
+    </div>
+
+    <div class="card">
+      <h3>Each day</h3>
+      ${dailyChart(r)}
+      ${LEGEND}
+      <details><summary class="small">As a table</summary><div class="scroll"><table class="list">
+        <tr><th>Day</th><th>Made</th><th>Sold</th><th>Given away</th><th>Not paid</th><th>Left</th><th>Orders</th><th>Revenue</th></tr>
+        ${r.days.filter((d: Sales) => d.made || out(d) || d.orders).map((d: Sales) => html`<tr data-day="${d.day}"><td>${dayName(d.day)}</td><td>${d.made || "–"}</td>
+          <td><b>${d.sold}</b></td><td>${d.given}</td><td>${d.unpaid}</td><td>${d.left}</td><td>${d.orders}</td><td>${money(d.revenue)}</td></tr>`)}
+      </table></div></details>
+    </div>
+
+    <div class="grid2">
+      <div class="card">
+        <h3>Buns</h3>
+        ${r.buns.length ? r.buns.map((b: Sales) => html`<div class="bunrow">
+          <div class="row between"><b>${b.name}</b><span>${b.sold} sold · ${pct(b.sold, m.sold)}%</span></div>
+          ${stack(b, bunMax)}
+          <div class="small muted">${b.made ? `${b.made} made, ${b.left} left` : "no baking plan"}${b.sold_out ? ` · sold out on ${b.sold_out} ${b.sold_out === 1 ? "day" : "days"}` : ""} · ${money(b.revenue)}</div>
+        </div>`) : html`<p class="muted">No buns yet this month.</p>`}
+        ${r.buns.length ? LEGEND : ""}
+      </div>
+      <div class="card">
+        <h3>Weekdays</h3>
+        <p class="small muted">Average buns sold per day, on days we baked or sold.</p>
+        ${r.weekdays.map((w: { weekday: number; days: number; avg: number | null }) => html`<div class="hrow">
+          <span>${WEEKDAYS[w.weekday]}</span>
+          <div class="hbar">${w.avg ? html`<i class="v-sold" style="width:${(w.avg / weekMax) * 100}%"></i>` : ""}</div>
+          <span class="small">${w.avg === null ? html`<span class="muted">–</span>` : html`<b>${w.avg}</b> <span class="muted">· ${w.days} ${w.days === 1 ? "day" : "days"}</span>`}</span>
+        </div>`)}
+      </div>
+      <div class="card">
+        <h3>Where sales come from</h3>
+        ${mix.map(([label, v]) => html`<div class="bunrow">
+          <div class="row between"><span>${label}</span><span><b>${v}</b> buns · ${pct(v, m.sold)}%</span></div>
+          <div class="hbar">${v ? html`<i class="v-sold" style="width:${pct(v, m.sold)}%"></i>` : ""}</div>
+        </div>`)}
+        <p class="small" style="margin-top:var(--space-3)">
+          Delivery <b>${m.delivery}</b> · pickup <b>${m.pickup}</b> orders<br>
+          Pre-orders <b>${m.preorder}</b> · same-day extras <b>${m.extra}</b> buns<br>
+          Given away <b>${m.given}</b> buns
+        </p>
+      </div>
+      <div class="card">
+        <h3>Payments</h3>
+        <p class="small">Not paid yet: <b>${money(m.unpaid_mvr)}</b> <span class="muted">(${m.unpaid} buns: orders waiting for payment or the bank, unpaid shop invoices)</span></p>
+        <p class="small">Didn't go through: <b>${m.lost_orders}</b> ${m.lost_orders === 1 ? "order" : "orders"}, ${m.lost_buns} buns
+          <span class="muted">(${m.expired} not paid in time, ${m.lost_orders - m.expired} cancelled or rejected)</span></p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Month by month</h3>
+      <div class="scroll"><table class="list">
+        <tr><th>Month</th><th>Buns sold</th><th>Revenue</th><th style="width:30%"></th><th>Orders</th><th>Left over</th></tr>
+        ${r.months.map((x: Sales) => html`<tr data-id="${x.month}" class="${x.month === r.month ? "on" : ""}"><td>${monthName(x.month, "short")}</td><td><b>${num(x.sold)}</b></td>
+          <td>${money(x.revenue)}</td><td><div class="hbar">${x.revenue ? html`<i class="v-sold" style="width:${(x.revenue / monthMax) * 100}%"></i>` : ""}</div></td>
+          <td>${num(x.orders)}</td><td>${x.made ? `${num(x.left)} (${pct(x.left, x.made)}%)` : "–"}</td></tr>`)}
+      </table></div>
+      <p class="small muted" style="margin-top:var(--space-2)">This month so far. Tap a month to open it.</p>
+    </div>
+    <p class="small muted">Sold = paid orders and paid shop invoices (shops by invoice day, after their share). Made = the higher of the
+      baking plan and what the bot logged as baked. Buns sold some other way show up as left over.</p>`);
+
+  const open = (d: string) => go({ tab: "sales", date: d });
+  $<HTMLInputElement>("#d").onchange = (e) => open((e.target as HTMLInputElement).value);
+  if (!isToday) $("#today").onclick = () => open("");
+  // A day in the chart or its table opens at the top, where that day's numbers are.
+  const openDay = (d: string) => {
+    open(d);
+    scrollTo({ top: 0, behavior: "smooth" });
+  };
+  app.querySelectorAll<HTMLElement | SVGElement>("[data-day]").forEach((el) => {
+    el.onclick = () => openDay(el.dataset.day!);
+    el.onkeydown = (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      e.preventDefault();
+      openDay(el.dataset.day!);
+    };
+  });
+  // A month opens on its last day, or today for this month.
+  app.querySelectorAll<HTMLElement>("tr[data-id]").forEach((tr) => {
+    const [y, mo] = tr.dataset.id!.split("-").map(Number);
+    const last = new Date(Date.UTC(y, mo, 0)).toISOString().slice(0, 10);
+    tr.onclick = () => open(last < r.today ? last : r.today);
+  });
+}
+
+/** Columns for each day of the month: sold, given away or not paid, left over (together: what was made). */
+function dailyChart(r: Sales) {
+  const [y, mo] = r.month.split("-").map(Number);
+  const n = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+  const byDay = new Map<string, Sales>(r.days.map((d: Sales) => [d.day, d]));
+  // Drawn at the card's real width (inside its padding), so 11px labels stay 11px on a phone.
+  const W = Math.round(Math.max(280, Math.min(940, app.clientWidth - 34))), H = 196, L = 30, T = 8, B = 24;
+  const ph = H - T - B, band = (W - L) / n, bw = Math.max(3, Math.min(16, band - 4));
+  const peak = Math.max(1, ...r.days.map((d: Sales) => Math.max(d.made, out(d))));
+  const step = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000].find((s) => peak / s <= 4) ?? 2000;
+  const max = Math.ceil(peak / step) * step;
+  const py = (v: number) => T + ph - (v / max) * ph;
+  const f = (x: number) => x.toFixed(1);
+  const marks: Raw[] = [];
+  for (let v = 0; v <= max; v += step) {
+    marks.push(html`<line x1="${L}" x2="${W}" y1="${f(py(v))}" y2="${f(py(v))}" class="${v ? "grid" : "axis"}"/><text x="${L - 6}" y="${f(py(v) + 4)}" class="tick" text-anchor="end">${v}</text>`);
+  }
+  const sel = Number(r.day.slice(8));
+  for (let i = 0; i < n; i++) {
+    const day = `${r.month}-${String(i + 1).padStart(2, "0")}`, d = byDay.get(day);
+    const x = L + i * band, bx = x + (band - bw) / 2;
+    const off = d?.closed && !d.made && !out(d);
+    if (off) marks.push(html`<rect x="${f(x + 1)}" y="${T}" width="${f(band - 2)}" height="${ph}" class="v-off"/>`);
+    if (d) {
+      const parts = ([[d.sold, "v-sold"], [d.given + d.unpaid, "v-other"], [d.left, "v-left"]] as [number, string][]).filter(([v]) => v > 0);
+      let below = 0;
+      parts.forEach(([v, cls], k) => {
+        const top = py(below + v), bottom = py(below) - (k ? 2 : 0); // 2px surface gap between segments
+        below += v;
+        if (bottom - top < 0.5) return;
+        const rr = k === parts.length - 1 ? Math.min(4, bottom - top, bw / 2) : 0; // round only the top end
+        marks.push(html`<path class="${cls}" d="M${f(bx)},${f(bottom)}V${f(top + rr)}Q${f(bx)},${f(top)} ${f(bx + rr)},${f(top)}H${f(bx + bw - rr)}Q${f(bx + bw)},${f(top)} ${f(bx + bw)},${f(top + rr)}V${f(bottom)}Z"/>`);
+      });
+      const tip = [dayName(day), off ? "Off day" : `Sold ${d.sold} · ${money(d.revenue)}`,
+        d.given || d.unpaid ? `Given away ${d.given} · not paid ${d.unpaid}` : "", d.made ? `Made ${d.made} · left ${d.left}` : ""].filter(Boolean).join("\n");
+      marks.push(html`<rect x="${f(x)}" y="${T}" width="${f(band)}" height="${ph}" class="hit" data-day="${day}" data-tip="${tip}" tabindex="0" aria-label="${tip.replace(/\n/g, ", ")}"/>`);
+    }
+    const label = i + 1 === 1 || (i + 1) % 7 === 1 || i + 1 === sel;
+    if (label && (i + 1 === sel || Math.abs(i + 1 - sel) > 1)) {
+      marks.push(html`<text x="${f(x + band / 2)}" y="${H - 6}" class="tick${i + 1 === sel ? " sel" : ""}" text-anchor="middle">${i + 1}</text>`);
+    }
+    if (i + 1 === sel) marks.push(html`<rect x="${f(bx)}" y="${T + ph + 3}" width="${f(bw)}" height="2" class="sel"/>`);
+  }
+  return html`<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Buns made and sold each day of ${monthName(r.month)}">${marks}</svg>`;
 }
 
 async function products() {

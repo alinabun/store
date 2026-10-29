@@ -150,6 +150,48 @@ pre { white-space: pre-wrap; word-break: break-all; font-size: .8rem; background
 .boat-results { display: grid; gap: var(--space-1); margin-top: var(--space-2); max-height: 260px; overflow-y: auto; }
 .boat-option { display: flex; flex-direction: column; align-items: flex-start; text-align: left; background: var(--white); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 8px 12px; font-weight: 500; }
 
+/* Sales tab. Chart colours: sold = golden crust; given away or not paid = a rust checked against it for
+   colour-blind and normal-vision separation; left over = warm glaze (de-emphasis, so every number is also in a label or table). */
+:root { --viz-sold: #BD8145; --viz-other: #9C4A2F; --viz-left: #D9C1A0; --viz-off: rgba(59, 36, 23, 0.05); --viz-grid: rgba(59, 36, 23, 0.08); }
+.v-sold { fill: var(--viz-sold); background: var(--viz-sold); }
+.v-other { fill: var(--viz-other); background: var(--viz-other); }
+.v-left { fill: var(--viz-left); background: var(--viz-left); }
+.v-off { fill: var(--viz-off); }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--space-3); margin-bottom: var(--space-4); }
+.kpi { background: var(--white); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); box-shadow: var(--shadow-sm); }
+.kpi > span { display: block; font-size: .85rem; color: var(--text-muted); }
+.kpi > b { display: block; font-size: 1.6rem; font-weight: 600; line-height: 1.3; }
+.kpi small { display: block; font-size: .8rem; color: var(--text-muted); }
+.kpi small.up { color: var(--ok-text); font-weight: 600; }
+.kpi small.down { color: var(--bad-text); font-weight: 600; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 0 var(--space-4); }
+.legend { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); color: var(--text-muted); margin: var(--space-2) 0; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+/* Bars ≤ 12px thick, 2px surface gaps between segments, rounded only at the data end. */
+.hbar { display: flex; gap: 2px; height: 12px; min-width: 40px; }
+.hbar i { display: block; flex: 0 1 auto; min-width: 2px; }
+.hbar i:last-child { border-radius: 0 4px 4px 0; }
+.hrow { display: grid; grid-template-columns: 3rem 1fr 6.5rem; align-items: center; gap: var(--space-3); padding: 5px 0; }
+.bunrow { display: grid; gap: 4px; padding: var(--space-2) 0; border-bottom: 1px solid var(--border); }
+.bunrow:last-of-type { border-bottom: 0; }
+svg.chart { display: block; width: 100%; height: auto; }
+svg.chart .grid { stroke: var(--viz-grid); stroke-width: 1; }
+svg.chart .axis { stroke: var(--border-strong); stroke-width: 1; }
+svg.chart .tick { fill: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+svg.chart .tick.sel { fill: var(--text); font-weight: 700; }
+svg.chart rect.sel { fill: var(--dark-roast); }
+svg.chart .hit { fill: transparent; cursor: pointer; outline: none; }
+svg.chart .hit:hover, svg.chart .hit:focus-visible { fill: rgba(59, 36, 23, 0.06); }
+.tip { position: fixed; z-index: 20; pointer-events: none; white-space: pre-line; background: var(--dark-roast); color: var(--milk-bun);
+  font-size: .85rem; line-height: 1.4; padding: 6px 10px; border-radius: var(--radius-sm); box-shadow: var(--shadow-md); max-width: 260px; }
+.tip[hidden] { display: none; }
+table.list tr.on { background: var(--bg); }
+@media (max-width: 600px) {
+  .kpi > b { font-size: 1.3rem; }
+  .wide-only { display: none; }
+}
+details summary { cursor: pointer; color: var(--text-muted); margin-top: var(--space-2); }
+
 /* Printing an invoice: only the invoice itself. */
 @media print {
   header.top, nav.tabs, .no-print { display: none !important; }
