@@ -20,6 +20,7 @@ let fee = 0; // laari; delivery fee for the current pin
 interface Vessel { id: number; name: string; operator: string | null; vessel_type: string | null; location: string | null }
 let boat: Vessel | null = null;
 let cutoff = "8 pm"; // from the server's cutoff hour
+let minDelivery = 0; // buns; delivery needs at least this many (from the server)
 // deno-lint-ignore no-explicit-any
 let leaflet: any = null;
 
@@ -28,6 +29,7 @@ async function load() {
     let r;
     [{ products }, r] = await Promise.all([api("/catalog"), api("/delivery-dates")]);
     ({ dates, pickup_place: pickupPlace } = r);
+    minDelivery = Number(r.delivery_min_buns ?? 0);
     const hr = Number(r.cutoff_hour);
     cutoff = `${hr % 12 || 12} ${hr < 12 ? "am" : "pm"}`;
     $("#intro").textContent = `Pre-order by ${cutoff} the day before. After that, you can still order our extra buns while they last.`;
@@ -293,6 +295,7 @@ function update() {
   }
   const withFee = fulfilment() === "delivery" && buns ? fee : 0;
   $("#sum").textContent = buns ? `${buns} bun${buns > 1 ? "s" : ""} · ${mvr((laari + withFee) / 100)}${withFee ? " incl. delivery" : ""}` : "No buns yet";
+  if (fulfilment() === "delivery" && buns < minDelivery) $("#sum").textContent += ` · delivery is for ${minDelivery}+ buns`;
   showError("");
 }
 
@@ -313,6 +316,9 @@ async function submit(e: SubmitEvent) {
   if (buns > date.left) return showError(`Only ${date.left} buns are left for ${date.label}. Please order fewer or pick another day.`);
   const over = items.find((i) => i.qty > (date.products[i.product_id] ?? 0));
   if (over) return showError(`Only ${date.products[over.product_id] ?? 0} ${products.find((p) => p.id === over.product_id)?.name} left for ${date.label}.`);
+  if (fulfilment() === "delivery" && buns < minDelivery) {
+    return showError(`Delivery is for orders of ${minDelivery} buns or more. Please add more buns, or choose pickup.`);
+  }
   if (!get("name")) return showError("Please fill in your name.");
   if (!get("phone")) return showError("Please fill in your phone number.");
   const toBoat = fulfilment() === "delivery" && deliverTo() === "boat";

@@ -152,7 +152,7 @@ async function orders(p: URLSearchParams) {
           <td>${o.customer_name}<div class="small muted">${o.phone}</div></td>
           <td>${o.delivery_date}</td>
           <td>${mvr(o.total_mvr)}<div class="small muted">${o.total_buns} buns</div></td>
-          <td>${chip(o.status)} ${o.fulfilment === "pickup" ? html`<span class="chip">pickup</span>` : ""} ${o.entered_by ? html`<span class="chip">by us</span>` : ""} ${o.needs_review ? html`<span class="chip review">review</span>` : ""}</td>
+          <td>${chip(o.status)} ${o.fulfilment === "pickup" ? html`<span class="chip">pickup</span>` : ""} ${o.entered_by ? html`<span class="chip">by us</span>` : ""} ${o.needs_review ? html`<span class="chip review">review</span>` : ""} ${String(o.on_telegram) === "false" ? html`<span class="chip review">not on Telegram</span>` : ""}</td>
         </tr>`)}
     </table></div>
     ${r.orders.length ? "" : html`<p class="muted">No orders.</p>`}
@@ -248,6 +248,7 @@ async function orderDetail(id: string) {
     <button class="secondary" id="back">← Orders</button>
     <h1 style="margin-top:var(--space-4)">${o.public_id} ${chip(o.status)}</h1>
     ${o.needs_review ? html`<div class="notice bad"><b>Needs review:</b> ${o.review_reason}</div>` : ""}
+    ${o.on_telegram === false ? html`<div class="notice bad small"><b>The slip isn't in the Telegram group yet.</b> Trying again every minute. Last error: ${o.telegram_error ?? "–"}</div>` : ""}
     ${o.customer_message ? html`<div class="notice info small">Customer sees: ${o.customer_message}</div>` : ""}
     ${o.entered_by ? html`<div class="notice info small">Entered by ${o.entered_by}.${o.status === "awaiting_payment"
       ? " The buns are held until you mark it paid or cancel it; it doesn't expire. The customer can also pay with the link below." : ""}</div>` : ""}
