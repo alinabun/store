@@ -62,7 +62,12 @@ export function parseMibSlip(text: unknown, receiver = "Eshan Shafeeq"): MibSlip
   if (fromAccount) fromName = t.slice(t.indexOf(fromAccount) + fromAccount.length).match(/^\s*([A-Za-z][A-Za-z .'-]+)/)?.[1].trim() ?? null;
   else {
     const esc = receiver.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    fromName = t.match(new RegExp(`^\\s*([A-Za-z][A-Za-z .'-]*?)\\s*(?:→|->|>)?\\s*${esc}\\s*$`, "im"))?.[1].trim() || null;
+    // "Quick transfer": the transaction number, then the sender's line, then the receiver's.
+    // Green receipt: sender and receiver on one line. Never a field label ("From", "To", …).
+    fromName = [
+      t.match(new RegExp(`^\\d{6,12}[ \\t]*\\n\\s*([A-Za-z][A-Za-z .'-]*?)[ \\t]*\\n\\s*${esc}[ \\t]*$`, "im"))?.[1],
+      t.match(new RegExp(`^[ \\t]*([A-Za-z][A-Za-z .'-]*?)[ \\t]*(?:→|->|>)?[ \\t]*${esc}[ \\t]*$`, "im"))?.[1],
+    ].map((n) => n?.trim()).find((n) => n && !/^(from|to|bank|remarks|transaction.*|status|success(ful)?)$/i.test(n)) ?? null;
   }
   return { sentAt, fromName, fromAccount };
 }

@@ -42,7 +42,11 @@ Deno.test("nothing recognisable", () => {
 const MIB_REQUEST = `NM\n\nId#\n\nFrom\n\nTo\n\nBank\nCreated Date\n\nStatus Date\n\nES\n\n800000001\n\n90100000000000456\nMariyam Hassan\n\n7730000565406\nESHAN SHAFEEQ\n\nBML\n2026-10-27 10:38:37\n\n2026-10-27 10:38:37\n\n@) MALDIVES ISLAMIC BANK`;
 const MIB_RECEIPT = `TRANSACTION RECEIPT\ni\n\nSUCCESSFUL\n\n>\n\nAisha N. Eshan Shafeeq\n\nTOTAL AMOUNT\n\n800000002\n7730000565406\n\nBank of Maldives PLC\nOct 27, 2026 at 12:32 PM\n\ncheck01\n\n(@) MALDIVES ISLAMIC BANK`;
 
+const MIB_QUICK = `=>\n\nMariyam Hass...\n\nTransaction#\n\nFrom\n\nTo\n\nBank\n\nTransaction Type\n\nTransaction Date\n\nProcessed Date\n\nRemarks\n\nEshan Shafeeq\n\nMVR 190.00\n\nSuccess\n\n800000003\n\nMariyam Hassan Ali\n\nEshan Shafeeq\n7730000565406\n\nBank of Maldives\n\nQuick Transfer\n\n2026-10-29 12:58:44\n\n2026-10-29 12:58:44\n\nN/A\n\n@)) MALDIVES ISLAMIC BANK\n`;
+
 Deno.test("MIB receipts", () => {
+  assert.deepEqual(parseMibSlip(MIB_QUICK), { sentAt: "2026-10-29T12:58:44", fromName: "Mariyam Hassan Ali", fromAccount: null });
+  assert.equal(parseMibSlip("From\nTo\nEshan Shafeeq\nislamic bank")?.fromName, null, "a label is never the sender");
   assert.deepEqual(parseMibSlip(MIB_REQUEST), { sentAt: "2026-10-27T10:38:37", fromName: "Mariyam Hassan", fromAccount: "90100000000000456" });
   assert.deepEqual(parseMibSlip(MIB_RECEIPT), { sentAt: "2026-10-27T12:32", fromName: "Aisha N.", fromAccount: null });
   assert.equal(parseMibSlip(MIB_RECEIPT, "ESHAN SHAFEEQ")?.fromName, "Aisha N.", "receiver name in any case");
