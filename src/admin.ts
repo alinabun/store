@@ -125,6 +125,7 @@ async function route() {
 const chip = (s: string) => html`<span class="chip ${s}">${s.replace(/_/g, " ")}</span>`;
 const when = (t: string | null) => t ? new Date(t).toLocaleString("en-GB", { timeZone: "Indian/Maldives", dateStyle: "medium", timeStyle: "short" }) : "";
 const tomorrow = () => new Date(Date.now() + (5 + 24) * 3600_000).toISOString().slice(0, 10);
+const maleToday = () => new Date(Date.now() + 5 * 3600_000).toISOString().slice(0, 10);
 
 // ── Orders ──
 
@@ -328,30 +329,32 @@ async function act(o: any, action: string) {
 async function production(date: string) {
   date ||= tomorrow();
   type Row = {
-    product_id: string; product_name: string; linked: boolean; planned: number | null; baked: number;
+    product_id: string; product_name: string; linked: boolean; planned: number | null; baked: number; leftover: number;
     paid: number; checking: number; unpaid: number; preorders: number; extras: number;
   };
-  const r = await call(`/admin/production?date=${date}`);
+  const isToday = date === maleToday();
+  const [r, lo] = await Promise.all([call(`/admin/production?date=${date}`), isToday ? call("/admin/leftovers") : null]);
   const rows = r.products as Row[];
   const sum = (k: keyof Row) => rows.reduce((a, p) => a + Number(p[k] ?? 0), 0);
-  // Buns customers can still order as extras: what's baked (or planned, whichever is higher) minus all orders.
-  const left = (p: Row) => Math.max(0, Math.max(p.planned ?? 0, p.baked) - p.preorders - p.extras);
+  // Buns customers can still order as extras: what's baked (or planned, whichever is higher) and leftovers put on sale, minus all orders.
+  const left = (p: Row) => Math.max(0, Math.max(p.planned ?? 0, p.baked) + p.leftover - p.preorders - p.extras);
   shell("production", html`
     <div class="filters">
       <label>Day<input type="date" id="d" value="${date}"></label>
     </div>
+    ${lo ? leftoversCard(lo) : ""}
     <h2>${r.label}</h2>
     <p>Deliveries: <b>${r.deliveries} of ${r.settings.delivery_max_orders}</b> · Pre-orders: <b>${sum("preorders")} of ${r.settings.preorder_max_buns}</b> buns
       <span class="muted small">(limits are in Days → Ordering settings)</span></p>
     <form id="plan"><div class="scroll"><table class="list">
-      <tr><th>Bun</th><th>Baking</th><th>Baked</th><th>Pre-orders</th><th>Extras sold</th><th>Extras left</th><th>Paid</th><th>Checking</th><th>Not paid</th></tr>
+      <tr><th>Bun</th><th>Baking</th><th>Baked</th>${sum("leftover") ? html`<th>Leftovers</th>` : ""}<th>Pre-orders</th><th>Extras sold</th><th>Extras left</th><th>Paid</th><th>Checking</th><th>Not paid</th></tr>
       ${rows.map((p) => html`<tr>
         <td>${p.product_name}</td>
         <td>${p.linked ? html`<input name="${p.product_id}" type="number" min="0" step="1" value="${p.planned ?? ""}" placeholder="–" style="max-width:80px">` : html`<span class="muted small">not in bot</span>`}</td>
-        <td>${p.baked || html`<span class="muted">–</span>`}</td>
+        <td>${p.baked || html`<span class="muted">–</span>`}</td>${sum("leftover") ? html`<td>${p.leftover}</td>` : ""}
         <td>${p.preorders}</td><td>${p.extras}</td><td><b>${left(p)}</b></td>
         <td>${p.paid}</td><td>${p.checking}</td><td class="muted">${p.unpaid}</td></tr>`)}
-      <tr><td><b>Total</b></td><td>${sum("planned")}</td><td>${sum("baked")}</td><td>${sum("preorders")}</td><td>${sum("extras")}</td>
+      <tr><td><b>Total</b></td><td>${sum("planned")}</td><td>${sum("baked")}</td>${sum("leftover") ? html`<td>${sum("leftover")}</td>` : ""}<td>${sum("preorders")}</td><td>${sum("extras")}</td>
         <td><b>${rows.reduce((a, p) => a + left(p), 0)}</b></td><td>${sum("paid")}</td><td>${sum("checking")}</td><td class="muted">${sum("unpaid")}</td></tr>
     </table></div>
     <div class="row" style="margin-top:var(--space-3);flex-wrap:wrap">
@@ -370,6 +373,33 @@ async function production(date: string) {
     <p class="small muted" style="margin-top:var(--space-3)">Paid = paid or delivered. Checking = waiting for the bank. Cancelled and rejected orders are left out.</p>`);
   const msg = (m: string, ok = false) => render($("#prod-msg"), html`<div class="notice ${ok ? "ok" : "bad"} small" style="margin-top:var(--space-3)">${m}</div>`);
   $<HTMLInputElement>("#d").onchange = (e) => go({ tab: "production", date: (e.target as HTMLInputElement).value });
+  const leftForm = $<HTMLFormElement>("#leftovers");
+  if (leftForm) {
+    leftForm.onsubmit = async (e) => {
+      e.preventDefault();
+      const lines = [...leftForm.querySelectorAll<HTMLInputElement>("input[type=number]")].map((i) => ({ product_id: i.name, available: Number(i.value) }));
+      const given = lo.buns.reduce((a: number, b: { product_id: string; left: number }) => a + b.left - (lines.find((l) => l.product_id === b.product_id)?.available ?? 0), 0);
+      if (given && !confirm(`${given} ${given === 1 ? "bun" : "buns"} not put on sale will count as given away. Continue?`)) return;
+      try {
+        await call("/admin/leftovers", { lines });
+        await production(date);
+        msg("Leftovers are on sale today.", true);
+      } catch (err) {
+        msg((err as Error).message);
+      }
+    };
+  }
+  const openToday = $("#open-today");
+  if (openToday) {
+    openToday.onclick = async () => {
+      try {
+        await call("/admin/day", { date, off: false });
+        await production(date);
+      } catch (err) {
+        msg((err as Error).message);
+      }
+    };
+  }
   $<HTMLFormElement>("#plan").onsubmit = async (e) => {
     e.preventDefault();
     const lines = [...(e.target as HTMLFormElement).querySelectorAll<HTMLInputElement>("input[type=number]")]
@@ -402,6 +432,29 @@ async function production(date: string) {
       msg((err as Error).message);
     }
   };
+}
+
+/** Today only: the last baking day's leftovers, counted like the Sales tab, to put on sale again at the same price. */
+// deno-lint-ignore no-explicit-any
+function leftoversCard(lo: any) {
+  const closed = lo.closed ? html`<div class="notice warn small">Today is an off day, so customers can't order.
+    <button type="button" class="copy" id="open-today">Open today</button></div>` : "";
+  if (lo.done.length) {
+    const given = lo.done.reduce((a: number, d: { given: number }) => a + d.given, 0);
+    return html`<div class="card"><h3>Leftovers on sale today</h3>${closed}
+      <p class="small">${lo.done.map((d: { name: string; available: number }) => `${d.available} ${d.name}`).join(", ")}${given ? ` · ${given} given away` : ""}</p></div>`;
+  }
+  if (!lo.buns.length) return closed ? html`<div class="card">${closed}</div>` : "";
+  return html`<form class="card" id="leftovers">
+    <h3>Left over from ${lo.from_label}</h3>
+    <p class="small muted">How many of each are still good to sell today? They go on sale at the normal price. Any you don't put on sale count as given away.</p>
+    ${closed}
+    <div class="row" style="flex-wrap:wrap">
+      ${lo.buns.map((b: { product_id: string; name: string; left: number }) => html`<label>${b.name} <span class="muted small">(${b.left} left)</span>
+        <input name="${b.product_id}" type="number" min="0" max="${b.left}" step="1" value="${b.left}" required style="max-width:90px"></label>`)}
+    </div>
+    <button style="margin-top:var(--space-3)">Put on sale today</button>
+  </form>`;
 }
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];

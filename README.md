@@ -68,6 +68,9 @@ permanent copy: search the order ID in the slips group.
 - **Production**: per bun for a day: the baking plan (editable here, or with /plan in the Telegram bot; both write
   the same plan), baked so far (bot /batch), pre-orders, extras sold, extras left, and paid / checking / not paid.
   Also the pre-order limit per day. The per-flavour limit is on each product.
+  Today only: **Left over from …** shows each bun left over on the last baking day; lower any that aren't good any
+  more and press **Put on sale today** (once a day). They're sold at the normal price; the rest count as given away.
+  If today is an off day, **Open today** opens it.
 - **Days**: ordering settings (pre-order limit per day, deliveries per day, minutes to pay before an unpaid order is
   cancelled and its buns released, pickup details); weekly off days (Fri + Sat to start; a change starts 8 days out, after the days customers can already
   book) and one-time off days for any of the next 14 days; a weekly off day can be opened for just that date. Orders already placed for a day you close stay; cancel them if needed.
