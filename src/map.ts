@@ -52,5 +52,15 @@ export async function pinPicker(el: HTMLElement, initial: Pin | null, onChange: 
       if (!marker) map.setView(ll, 17);
     }, () => {}, { enableHighAccuracy: true, timeout: 15_000, maximumAge: 60_000 });
   }).observe(el);
-  return map;
+  // For saved details and "Clear": move or remove the pin from outside, without calling onChange.
+  const setPin = (p: Pin | null) => {
+    if (p) {
+      place(p, true);
+      map.setView([p.lat, p.lng], 17);
+    } else if (marker) {
+      marker.remove();
+      marker = null;
+    }
+  };
+  return Object.assign(map, { setPin });
 }

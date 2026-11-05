@@ -31,6 +31,8 @@ The browser never touches tables: everything goes through the `store` function.
    the orders, and returns the order ID (`AB-7K4Q`) and the status token.
    Delivery is to an address or to a boat (picked from FollowMe's boat list, imported daily, plus the time it will
    be at the pin). Delivery outside Malé adds MVR 80 (editable); pickup is free.
+   Customers choose a time: delivery is ASAP (today only), 10 AM, 12 PM or 4 PM; pickup is every half hour, 10 AM to 10 PM.
+   Their details (name, phone, pin or boat) are saved only on their phone, with a list to pick from and a "Clear form" button.
 2. `/order/?t=…` shows the bank details and a PayMV QR for the total (scan with the BML app, or save it and scan
    from photos). The customer transfers, uploads a screenshot (compressed to 1600 px in
    the browser), and OCR (Tesseract, loaded only then) fills in the BML reference. The customer checks it and sends.
@@ -52,6 +54,8 @@ permanent copy: search the order ID in the slips group.
 
 - **Orders**: filter by status, delivery date, "needs review"; search by order ID or phone. `/admin/?order=AB-7K4Q`
   opens one order (the Telegram caption links there).
+- **New order**: past customers are suggested after 2 letters or digits of the name or phone; pick one to fill in both, or just keep typing. The time is optional. The order is posted to the Telegram group.
+- **Add free buns** (on an order): gifts or complimentary buns, with a reason. They come out of what's left that day, the total stays the same, and Sales counts them as given away.
 - **Order actions**:
   - **Mark paid (manual)**: for underpaid top-ups, other banks, cash. Enter the BML references to lock (each must already be in the bank records; a part-payment is locked at the amount the bank shows), or none for non-BML money. A note is required.
   - **Check bank again**
@@ -72,7 +76,7 @@ permanent copy: search the order ID in the slips group.
   more and press **Put on sale today** (once a day). They're sold at the normal price; the rest count as given away.
   If today is an off day, **Open today** opens it.
 - **Days**: ordering settings (pre-order limit per day, deliveries per day, minutes to pay before an unpaid order is
-  cancelled and its buns released, pickup details); weekly off days (Fri + Sat to start; a change starts 8 days out, after the days customers can already
+  cancelled and its buns released, pickup address, phone and map pin); weekly off days (Fri + Sat to start; a change starts 8 days out, after the days customers can already
   book) and one-time off days for any of the next 14 days; a weekly off day can be opened for just that date. Orders already placed for a day you close stay; cancel them if needed.
 - Each order shows **📍 Open pin in Google Maps**; the slips Telegram caption has the same link.
 - **Invoices**: invoices for buns placed in shops. Pick the shop and invoice date, enter buns sold and free (tasting)

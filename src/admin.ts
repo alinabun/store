@@ -2,6 +2,7 @@
 // and the store function checks it against store.managers.
 import { uploadTo } from "./image.ts";
 import { $, api, copyBtn, html, mvr, raw, type Raw, render, store } from "./lib.ts";
+import { type Pin, pinPicker } from "./map.ts";
 import { qrSvg } from "./qr.ts";
 
 const AUTH_URL = `${import.meta.env.VITE_SUPABASE_URL}/auth/v1`;
@@ -176,7 +177,8 @@ async function orders(p: URLSearchParams) {
 
 /** An order taken by a manager (DM, phone, in person) or a giveaway. It holds buns like a customer order but never expires. */
 async function newOrder() {
-  type Day = { date: string; label: string; kind: string; available: boolean; closed: boolean; products: Record<string, number> };
+  type Time = { value: string; label: string };
+  type Day = { date: string; label: string; kind: string; available: boolean; closed: boolean; products: Record<string, number>; delivery_times: Time[]; pickup_times: Time[] };
   const [{ products }, dd] = await Promise.all([api("/catalog"), api("/delivery-dates")]);
   const days = (dd.dates as Day[]).filter((d) => d.available);
   shell("orders", html`
@@ -184,8 +186,8 @@ async function newOrder() {
     <form class="card" id="no" style="margin-top:var(--space-4)">
       <h1>New order</h1>
       <div class="filters">
-        <label>Customer's name<input name="name" required maxlength="80"></label>
-        <label>Phone<input name="phone" type="tel" required placeholder="7xx xxxx"></label>
+        <label class="suggest">Customer's name<input name="name" required maxlength="80" autocomplete="off"></label>
+        <label class="suggest">Phone<input name="phone" type="tel" required placeholder="7xx xxxx" autocomplete="off"></label>
         <label>Day<select name="delivery_date">${days.map((d) => html`<option value="${d.date}">${d.label}${d.kind === "extras" ? " (extras)" : ""}</option>`)}</select></label>
       </div>
       <div class="scroll"><table class="list" style="margin-top:var(--space-4)">
@@ -195,6 +197,7 @@ async function newOrder() {
       </table></div>
       <div class="filters" style="margin-top:var(--space-4)">
         <label>Delivery or pickup<select name="fulfilment"><option value="delivery">Delivery</option><option value="pickup">Pickup</option></select></label>
+        <label>Time<select name="time"></select></label>
         <label class="deliv">Delivery fee (MVR)<input name="fee" inputmode="decimal" value="${dd.delivery_fee_male_mvr}"></label>
       </div>
       <p class="hint deliv">Malé is ${mvr(dd.delivery_fee_male_mvr)}, outside Malé ${mvr(dd.delivery_fee_outside_male_mvr)}.</p>
@@ -214,6 +217,9 @@ async function newOrder() {
     const day = days.find((d) => d.date === f.delivery_date.value);
     for (const tr of rows()) tr.querySelector(".left")!.textContent = String(day?.products[tr.dataset.p!] ?? 0);
     const free = f.free.checked, deliv = f.fulfilment.value === "delivery";
+    const times = (deliv ? day?.delivery_times : day?.pickup_times) ?? [], was = f.time.value;
+    render(f.time, html`<option value="">No set time</option>${times.map((t) => html`<option value="${t.value}">${t.label}</option>`)}`);
+    f.time.value = times.some((t) => t.value === was) ? was : "";
     $("#why").hidden = !free;
     f.querySelectorAll<HTMLElement>(".deliv").forEach((el) => (el.hidden = !deliv));
     const price = new Map((products as { id: string; price_mvr: string }[]).map((p) => [p.id, laari(p.price_mvr)]));
@@ -224,6 +230,7 @@ async function newOrder() {
   f.addEventListener("input", refresh);
   f.addEventListener("change", refresh);
   refresh();
+  customerSuggestions(f);
   if (!days.length) render($("#no-err"), html`<div class="notice bad">No day is open for orders right now.</div>`);
   f.onsubmit = async (e) => {
     e.preventDefault();
@@ -232,7 +239,7 @@ async function newOrder() {
     try {
       const deliv = f.fulfilment.value === "delivery";
       const r = await call("/admin/create-order", {
-        name: (f.elements.namedItem("name") as HTMLInputElement).value, phone: f.phone.value, delivery_date: f.delivery_date.value, items: items(), fulfilment: f.fulfilment.value,
+        name: (f.elements.namedItem("name") as HTMLInputElement).value, phone: f.phone.value, delivery_date: f.delivery_date.value, items: items(), fulfilment: f.fulfilment.value, time: f.time.value || null,
         ...(deliv ? { address: f.address.value || null, delivery_fee_mvr: f.fee.value } : {}),
         notes: f.notes.value || null, ...(f.free.checked ? { free: true, free_reason: f.free_reason.value } : {}),
       });
@@ -242,6 +249,58 @@ async function newOrder() {
       btn.disabled = false;
     }
   };
+}
+
+/** Past customers while typing a name or phone. The list floats over the form and fills nothing unless one is picked;
+ *  Enter only picks one after the arrow keys moved to it, so typing a new customer works as if it weren't there. */
+function customerSuggestions(f: HTMLFormElement) {
+  for (const input of [f.elements.namedItem("name"), f.phone] as HTMLInputElement[]) {
+    const list = document.createElement("div");
+    list.className = "sug";
+    list.hidden = true;
+    list.setAttribute("role", "listbox");
+    input.after(list);
+    let timer: number | undefined, seq = 0, active = -1;
+    const close = () => { list.hidden = true; active = -1; seq++; };
+    const options = () => [...list.querySelectorAll<HTMLElement>("button")];
+    const pick = (b: HTMLElement) => {
+      (f.elements.namedItem("name") as HTMLInputElement).value = b.dataset.name!;
+      f.phone.value = b.dataset.phone!;
+      close();
+    };
+    input.addEventListener("input", () => {
+      clearTimeout(timer);
+      const term = input.value.trim(), mine = ++seq;
+      active = -1;
+      if (term.length < 2) return void (list.hidden = true);
+      timer = setTimeout(async () => {
+        const { customers } = await call(`/admin/customer-search?q=${encodeURIComponent(term)}`).catch(() => ({ customers: [] }));
+        if (mine !== seq) return; // typed on, or left the field
+        render(list, html`${customers.map((c: { name: string; phone: string }) => html`<button type="button" tabindex="-1" role="option" data-name="${c.name}" data-phone="${c.phone}"><b>${c.name}</b> <span class="muted">${c.phone}</span></button>`)}`);
+        list.hidden = !customers.length;
+      }, 200);
+    });
+    input.addEventListener("keydown", (e) => {
+      if (list.hidden) return;
+      const opts = options();
+      if (e.key === "Escape") close();
+      else if (e.key === "Enter" && active >= 0) {
+        e.preventDefault();
+        pick(opts[active]);
+      } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        active = (active + (e.key === "ArrowDown" ? 1 : opts.length - (active < 0 ? 0 : 1))) % opts.length;
+        opts.forEach((b, i) => b.classList.toggle("on", i === active));
+      }
+    });
+    input.addEventListener("blur", close);
+    // mousedown, not click: picking mustn't blur the field first and close the list.
+    list.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      const b = (e.target as HTMLElement).closest<HTMLElement>("button");
+      if (b) pick(b);
+    });
+  }
 }
 
 async function orderDetail(id: string) {
@@ -266,15 +325,24 @@ async function orderDetail(id: string) {
         ${o.boat.phone ? html`<a href="tel:${o.boat.phone}">Call the boat: ${o.boat.phone}</a> · ` : ""}<a href="${o.boat.followme}" target="_blank" rel="noopener">Track on FollowMe</a></div>` : ""}
       ${o.map_url ? html`<p><a class="btn" href="${o.map_url}" target="_blank" rel="noopener">📍 Open pin in Google Maps</a></p>` : ""}
       ${o.notes ? html`<p class="muted">Notes: ${o.notes}</p>` : ""}
-      <p class="small">${o.fulfilment === "pickup" ? "Pickup" : "Delivery"} <b>${o.delivery_date}</b> · ${copyBtn(o.status_url, "Copy customer's order link")}</p>
+      <p class="small">${o.fulfilment === "pickup" ? "Pickup" : "Delivery"} <b>${o.delivery_date}</b>${o.time_label ? html` at <b>${o.time_label}</b>` : ""} · ${copyBtn(o.status_url, "Copy customer's order link")}</p>
     </div>
     <div class="card">
       <h2>Items</h2>
       <table class="items">
-        ${o.items.map((i: Record<string, string>) => html`<tr><td>${i.qty} × ${i.product_name}</td><td>${mvr(Number(i.unit_price) * Number(i.qty))}</td></tr>`)}
+        ${o.items.map((i: Record<string, string>) => html`<tr><td>${i.qty} × ${i.product_name}</td><td>${Number(i.gift_no) ? "🎁 Free" : mvr(Number(i.unit_price) * Number(i.qty))}</td></tr>`)}
         ${Number(o.delivery_fee_mvr) > 0 ? html`<tr><td>Delivery</td><td>${mvr(o.delivery_fee_mvr)}</td></tr>` : ""}
         <tr class="total"><td>Total</td><td>${mvr(o.total_mvr)}</td></tr>
       </table>
+      ${o.free_left ? html`<details style="margin-top:var(--space-3)"><summary>Add free buns</summary>
+        <form id="free" class="filters" style="margin-top:var(--space-2)">
+          <label>Bun<select name="product_id">${o.free_left.map((b: { id: string; name: string; left: number }) => html`<option value="${b.id}" ${b.left ? "" : "disabled"}>${b.name} (${b.left} left)</option>`)}</select></label>
+          <label>How many<input name="qty" type="number" min="1" max="50" step="1" value="1" required></label>
+          <label>Who or what for?<input name="reason" maxlength="300" required placeholder="e.g. birthday gift"></label>
+          <div class="row"><button>Add free</button></div>
+        </form>
+        <p class="hint">They come out of what's left for that day. The order's total stays the same.</p>
+        <div id="free-err"></div></details>` : ""}
     </div>
     <div class="card">
       <h2>Payment</h2>
@@ -295,6 +363,16 @@ async function orderDetail(id: string) {
     </div>`);
   $("#back").onclick = () => history.length > 1 ? history.back() : go({});
   app.querySelectorAll<HTMLButtonElement>("[data-action]").forEach((b) => (b.onclick = () => act(o, b.dataset.action!)));
+  const free = document.querySelector<HTMLFormElement>("#free");
+  if (free) free.onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      await call("/admin/add-free", { id: o.public_id, product_id: free.product_id.value, qty: Number(free.qty.value), reason: free.reason.value });
+      await orderDetail(o.public_id);
+    } catch (err) {
+      render($("#free-err"), html`<div class="notice bad">${(err as Error).message}</div>`);
+    }
+  };
 }
 
 // deno-lint-ignore no-explicit-any
@@ -478,7 +556,11 @@ async function days() {
         <label>Delivery fee in Malé (MVR)<input name="delivery_fee_male_mvr" inputmode="decimal" value="${st.delivery_fee_male_mvr}"></label>
         <label>Delivery fee outside Malé (MVR)<input name="delivery_fee_outside_male_mvr" inputmode="decimal" value="${st.delivery_fee_outside_male_mvr}"></label>
       </div>
-      <label>Pickup details (shown to customers who pick up)<textarea name="pickup_place" maxlength="300">${st.pickup_place}</textarea></label>
+      <label>Pickup address (shown to customers who pick up)<textarea name="pickup_place" maxlength="300">${st.pickup_place}</textarea></label>
+      <label>Phone they call when they come<input name="pickup_phone" type="tel" value="${st.pickup_phone}"></label>
+      <label>Pickup location on the map</label>
+      <p class="hint">Tap the map to put the pin. Customers get a link that opens it in Google Maps.</p>
+      <div id="pickup-map" class="map" aria-label="Map: tap to put the pickup pin"></div>
       <div class="row" style="margin-top:var(--space-3)"><button>Save settings</button><span id="settings-msg" class="small"></span></div>
       <p class="hint">The pre-order limit per flavour is on each bun in Products. The bot's evening reminder is sent at the cutoff hour.</p>
     </form>
@@ -503,6 +585,9 @@ async function days() {
             d.off === "weekly" ? "Open this day" : d.off ? "Open again" : d.opened ? "Close again" : "Make off day"}</button></td></tr>`)}
     </table>
     <div id="day-err"></div>`);
+  let pickupPin: Pin | undefined;
+  pinPicker($("#pickup-map"), st.pickup_pin, (p) => (pickupPin = { lat: p.lat, lng: p.lng }))
+    .catch(() => render($("#pickup-map"), html`<div class="notice bad">The map didn't load. Please refresh the page.</div>`));
   $<HTMLFormElement>("#settings").onsubmit = async (e) => {
     e.preventDefault();
     const f = e.target as HTMLFormElement;
@@ -514,6 +599,8 @@ async function days() {
         delivery_fee_male_mvr: (f.elements.namedItem("delivery_fee_male_mvr") as HTMLInputElement).value,
         delivery_fee_outside_male_mvr: (f.elements.namedItem("delivery_fee_outside_male_mvr") as HTMLInputElement).value,
         pickup_place: (f.elements.namedItem("pickup_place") as HTMLTextAreaElement).value,
+        pickup_phone: (f.elements.namedItem("pickup_phone") as HTMLInputElement).value,
+        ...(pickupPin ? { pickup_pin: pickupPin } : {}),
       });
       $("#settings-msg").textContent = "Saved.";
     } catch (err) {

@@ -199,3 +199,16 @@ details summary { cursor: pointer; color: var(--text-muted); margin-top: var(--s
   .wrap { padding: 0; max-width: none; }
   .card.invoice { border: 0; box-shadow: none; padding: 0; }
 }
+
+/* Saved details on the order form */
+.saved-row { align-items: flex-end; flex-wrap: wrap; }
+.saved-row .grow { flex: 1 1 200px; min-width: 0; }
+.saved-row label { margin-top: 0; }
+button.link { background: none; border: 0; padding: 0; margin-top: var(--space-1); color: var(--text); text-decoration: underline; font-weight: 500; }
+
+/* Past customers while typing a new order: floats over the form, so nothing moves */
+.suggest { position: relative; }
+.sug { position: absolute; z-index: 20; left: 0; right: 0; background: var(--white); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); box-shadow: 0 6px 18px rgb(0 0 0 / .12); }
+.sug[hidden] { display: none; }
+.sug button { display: block; width: 100%; text-align: left; background: none; color: var(--text); border: 0; border-radius: 0; padding: 8px 12px; font-weight: 500; }
+.sug button:hover, .sug button.on { background: var(--surface); }

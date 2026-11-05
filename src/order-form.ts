@@ -7,7 +7,9 @@ interface DeliveryDate {
   date: string; label: string; kind: "preorder" | "extras"; available: boolean; closed: boolean; left: number;
   products: Record<string, number>; // buns of each kind still available that day
   delivery_open: boolean;
+  delivery_times: TimeOption[]; pickup_times: TimeOption[]; // what can still be chosen that day
 }
+interface TimeOption { value: string; label: string }
 
 const MAX_PER_LINE = 50, MAX_BUNS = 100;
 const app = $("#app");
@@ -15,7 +17,7 @@ const qty = new Map<string, number>();
 let products: Product[] = [];
 let dates: DeliveryDate[] = [];
 let pin: Pin | null = null;
-let pickupPlace = "";
+let pickupPlace = "", pickupPhone = "", pickupMap: string | null = null;
 let fee = 0; // laari; delivery fee for the current pin
 interface Vessel { id: number; name: string; operator: string | null; vessel_type: string | null; location: string | null }
 let boat: Vessel | null = null;
@@ -28,7 +30,7 @@ async function load() {
   try {
     let r;
     [{ products }, r] = await Promise.all([api("/catalog"), api("/delivery-dates")]);
-    ({ dates, pickup_place: pickupPlace } = r);
+    ({ dates, pickup_place: pickupPlace, pickup_phone: pickupPhone, pickup_map_url: pickupMap } = r);
     minDelivery = Number(r.delivery_min_buns ?? 0);
     const hr = Number(r.cutoff_hour);
     cutoff = `${hr % 12 || 12} ${hr < 12 ? "am" : "pm"}`;
@@ -37,9 +39,8 @@ async function load() {
     render(app, html`<div class="notice bad">${(e as Error).message}</div><button onclick="location.reload()">Try again</button>`);
     return;
   }
-  const saved = store<{ name: string; phone: string; address: string; pin?: Pin }>("alinabun.customer");
+  const saved = savedDetails();
   const firstOpen = dates.find((d) => d.available)?.date;
-  pin = saved?.pin ?? null;
   render(app, html`
     <div id="mine"></div>
     <form id="f" novalidate>
@@ -73,17 +74,21 @@ async function load() {
       </div>
 
       <div class="card">
+        <div class="row between saved-row">
+          <div class="grow" id="saved-box"></div>
+          <button type="button" class="secondary" id="clear">Clear form</button>
+        </div>
         <label for="name">Your name</label>
-        <input id="name" name="name" autocomplete="name" maxlength="80" value="${saved?.name ?? ""}" required>
+        <input id="name" name="name" autocomplete="name" maxlength="80" required>
 
         <label for="phone">Phone number</label>
-        <input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="7xx xxxx" value="${saved?.phone ?? ""}" required>
+        <input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="7xx xxxx" required>
         <div class="hint">A Maldives mobile number, so we can call you about your order.</div>
 
         <label>Delivery or pickup?</label>
         <div class="dates" role="radiogroup" aria-label="Delivery or pickup">
           <label><input type="radio" name="fulfilment" value="delivery" checked><span>Delivery<small id="delivery-full"></small></span></label>
-          <label><input type="radio" name="fulfilment" value="pickup"><span>Pickup</span></label>
+          <label><input type="radio" name="fulfilment" value="pickup"><span>Pickup<small id="pickup-closed"></small></span></label>
         </div>
 
         <div id="delivery-box">
@@ -100,16 +105,26 @@ async function load() {
             <label for="boat-time">What time will the boat be there?</label>
             <input id="boat-time" type="time">
           </div>
+          <div id="delivery-time-box">
+            <label for="delivery-time">What time?</label>
+            <select id="delivery-time"></select>
+          </div>
           <label id="pin-label">Where should we deliver?</label>
           <p class="hint" id="pin-hint">We deliver in Malé, Hulhulé and Hulhumalé. Tap the map to put a pin on your home. Drag the pin to move it. The blue dot is where you are now.</p>
           <div id="map" class="map" aria-label="Map: tap to put your delivery pin"></div>
-          <div class="hint" id="pin-status">${saved?.pin ? "Pin from your last order. Move it if you're somewhere else." : "No pin yet."}</div>
+          <div class="hint" id="pin-status">No pin yet.</div>
           <div class="hint" id="fee-status"></div>
 
           <label for="address">Directions <span class="muted">(optional)</span></label>
-          <textarea id="address" name="address" maxlength="500" placeholder="House name, floor, door colour, what's nearby">${saved?.address ?? ""}</textarea>
+          <textarea id="address" name="address" maxlength="500" placeholder="House name, floor, door colour, what's nearby"></textarea>
         </div>
-        <div id="pickup-box" hidden><div class="notice info" style="margin-top:var(--space-3)">${pickupPlace}</div></div>
+        <div id="pickup-box" hidden>
+          <div class="notice info" style="margin-top:var(--space-3)">${pickupPlace}
+            ${pickupMap ? html`<br><a href="${pickupMap}" target="_blank" rel="noopener">📍 Open in Google Maps</a>` : ""}
+            ${pickupPhone ? html`<br>Call us when you come: <a href="tel:${pickupPhone}">${pickupPhone}</a>` : ""}</div>
+          <label for="pickup-time">What time will you come?</label>
+          <select id="pickup-time"></select>
+        </div>
 
         <label for="notes">Notes <span class="muted">(optional)</span></label>
         <textarea id="notes" name="notes" maxlength="500" placeholder="Anything we should know?"></textarea>
@@ -135,7 +150,7 @@ async function load() {
     $(`#q-${id}`).textContent = String(next);
     update();
   });
-  leaflet = pinPicker($("#map"), saved?.pin ?? null, (p) => {
+  leaflet = pinPicker($("#map"), saved[0]?.pin ?? null, (p) => {
     pin = { lat: p.lat, lng: p.lng };
     $("#pin-status").textContent = "📍 Pin placed. We'll call you when we're close.";
     showError("");
@@ -147,12 +162,101 @@ async function load() {
     if ((e.target as HTMLInputElement).name === "deliver_to") refreshDeliverTo();
   });
   refreshDay();
+  showSavedDetails();
+  if (saved[0]) applyDetails(saved[0]);
   applyChange();
   wireBoatSearch();
   showSavedOrders();
-  if (pin) quoteFee();
+  $("#clear").onclick = clearForm;
   $("#go").onclick = () => $("#submit").scrollIntoView({ behavior: "smooth", block: "center" });
   $<HTMLFormElement>("#f").onsubmit = submit;
+}
+
+// ── Details saved on this phone (never on the server: a phone number must not reveal anyone's address) ──
+
+interface Details { name: string; phone: string; fulfilment: string; deliverTo: string; address: string; pin: Pin | null; boat: Vessel | null }
+const MAX_SAVED = 5;
+
+function savedDetails(): Details[] {
+  const list = store<Details[]>("alinabun.details");
+  if (list) return list;
+  const old = store<{ name: string; phone: string; address: string; pin?: Pin }>("alinabun.customer"); // saved before this list existed
+  return old ? [{ ...old, pin: old.pin ?? null, fulfilment: "delivery", deliverTo: "address", boat: null }] : [];
+}
+
+const detailsLabel = (d: Details) =>
+  `${d.name} · ${d.fulfilment === "pickup" ? "Pickup" : d.boat ? `⛴ ${d.boat.name}` : d.address || "Map pin"}`;
+
+function showSavedDetails(selected = 0) {
+  const list = savedDetails();
+  render($("#saved-box"), list.length ? html`
+    <label for="saved">Your saved details</label>
+    <select id="saved">
+      ${list.map((d, i) => html`<option value="${i}" ${i === selected ? "selected" : ""}>${detailsLabel(d)}</option>`)}
+      <option value="" ${selected < 0 ? "selected" : ""}>New details</option>
+    </select>
+    <button type="button" class="link small" id="forget" ${selected < 0 ? "hidden" : ""}>Remove these from this phone</button>` : html``);
+  if (!list.length) return;
+  const pick = $<HTMLSelectElement>("#saved");
+  pick.onchange = () => {
+    $("#forget").hidden = !pick.value;
+    applyDetails(pick.value ? list[Number(pick.value)] : null);
+  };
+  $("#forget").onclick = () => {
+    store("alinabun.details", list.filter((_, i) => i !== Number(pick.value)));
+    store("alinabun.customer", null);
+    showSavedDetails(-1);
+    applyDetails(null);
+  };
+}
+
+/** Fill in who and where (never the buns, day or times); null empties them. */
+function applyDetails(d: Details | null) {
+  $<HTMLInputElement>("#name").value = d?.name ?? "";
+  $<HTMLInputElement>("#phone").value = d?.phone ?? "";
+  $<HTMLTextAreaElement>("#address").value = d?.address ?? "";
+  $<HTMLInputElement>("#boat-time").value = "";
+  const radio = (name: string, value: string) => {
+    const r = document.querySelector<HTMLInputElement>(`input[name=${name}][value="${value}"]`);
+    if (r && !r.disabled) r.checked = true;
+  };
+  radio("fulfilment", d?.fulfilment ?? "delivery");
+  radio("deliver_to", d?.deliverTo ?? "address");
+  setBoat(d?.boat ?? null);
+  pin = d?.pin ?? null;
+  leaflet?.then((m: { setPin: (p: Pin | null) => void }) => m?.setPin(pin));
+  fee = 0;
+  $("#fee-status").textContent = "";
+  $("#pin-status").textContent = pin ? "Pin from your last order. Move it if you're somewhere else." : "No pin yet.";
+  refreshFulfilment();
+  refreshDeliverTo();
+  if (pin) quoteFee();
+}
+
+function clearForm() {
+  for (const p of products) {
+    qty.set(p.id, 0);
+    $(`#q-${p.id}`).textContent = "0";
+  }
+  $<HTMLTextAreaElement>("#notes").value = "";
+  if (document.querySelector("#saved")) showSavedDetails(-1);
+  applyDetails(null);
+  $<HTMLSelectElement>("#delivery-time").value = day()?.delivery_times[0]?.value === "asap" ? "asap" : "";
+  $<HTMLSelectElement>("#pickup-time").value = "";
+  update();
+}
+
+function rememberDetails(d: Details) {
+  const same = (a: Details) => JSON.stringify(a) === JSON.stringify(d);
+  store("alinabun.details", [d, ...savedDetails().filter((a) => !same(a))].slice(0, MAX_SAVED));
+  store("alinabun.customer", null);
+}
+
+function setBoat(v: Vessel | null) {
+  boat = v;
+  render($("#boat-picked"), v ? html`<div class="notice ok small">⛴ <b>${v.name}</b> ${v.vessel_type ? `· ${v.vessel_type}` : ""}
+    <button type="button" class="copy" id="boat-change">Change</button></div>` : html``);
+  if (v) $("#boat-change").onclick = () => { setBoat(null); $("#boat-q").focus(); };
 }
 
 /** After "Change order": the cancelled order's day, buns, delivery choice and notes, as far as they're still available. */
@@ -215,11 +319,24 @@ function refreshDay() {
   }
   // Deliveries are capped per day; when full, only pickup is offered.
   const radio = document.querySelector<HTMLInputElement>("input[name=fulfilment][value=delivery]")!;
+  const pickupRadio = document.querySelector<HTMLInputElement>("input[name=fulfilment][value=pickup]")!;
   radio.disabled = !!d && !d.delivery_open;
+  pickupRadio.disabled = !!d && !d.pickup_times.length; // today, after the last pickup time
   $("#delivery-full").textContent = radio.disabled ? "Full that day" : "";
-  if (radio.disabled) document.querySelector<HTMLInputElement>("input[name=fulfilment][value=pickup]")!.checked = true;
+  $("#pickup-closed").textContent = pickupRadio.disabled ? "Closed for today" : "";
+  if (radio.disabled) pickupRadio.checked = true;
+  else if (pickupRadio.disabled) radio.checked = true;
+  fillTimes($<HTMLSelectElement>("#delivery-time"), d?.delivery_times ?? [], "asap");
+  fillTimes($<HTMLSelectElement>("#pickup-time"), d?.pickup_times ?? []);
   refreshFulfilment();
   update();
+}
+
+/** The day's times, keeping the choice if it's still there. Nothing is chosen for them, except ASAP where it's offered. */
+function fillTimes(el: HTMLSelectElement, times: TimeOption[], preferred = "") {
+  const was = el.value;
+  render(el, html`<option value="">Choose a time</option>${times.map((t) => html`<option value="${t.value}">${t.label}</option>`)}`);
+  el.value = times.some((t) => t.value === was) ? was : times.some((t) => t.value === preferred) ? preferred : "";
 }
 
 const fulfilment = () => document.querySelector<HTMLInputElement>("input[name=fulfilment]:checked")?.value ?? "delivery";
@@ -238,6 +355,7 @@ const deliverTo = () => document.querySelector<HTMLInputElement>("input[name=del
 function refreshDeliverTo() {
   const toBoat = deliverTo() === "boat";
   $("#boat-box").hidden = !toBoat;
+  $("#delivery-time-box").hidden = toBoat; // a boat has its own time
   $("#pin-label").textContent = toBoat ? "Where will the boat be?" : "Where should we deliver?";
   $("#pin-hint").textContent = toBoat
     ? "Tap the map where the boat will be (the jetty or harbour). Drag the pin to move it."
@@ -272,12 +390,9 @@ function wireBoatSearch() {
             <b>${v.name}</b><span class="small muted">${[v.vessel_type, v.operator, v.location && `now at ${v.location}`].filter(Boolean).join(" · ")}</span>
           </button>`)}` : html`<p class="hint">No boat found. Try another spelling, or choose "To an address".</p>`);
         $("#boat-results").querySelectorAll<HTMLButtonElement>("[data-vessel]").forEach((b) => (b.onclick = () => {
-          boat = vessels.find((v) => v.id === Number(b.dataset.vessel)) ?? null;
+          setBoat(vessels.find((v) => v.id === Number(b.dataset.vessel)) ?? null);
           render($("#boat-results"), html``);
           q.value = "";
-          render($("#boat-picked"), html`<div class="notice ok small">⛴ <b>${boat!.name}</b> ${boat!.vessel_type ? `· ${boat!.vessel_type}` : ""}
-            <button type="button" class="copy" id="boat-change">Change</button></div>`);
-          $("#boat-change").onclick = () => { boat = null; render($("#boat-picked"), html``); q.focus(); };
         }));
       } catch (e) {
         render($("#boat-results"), html`<p class="hint">${(e as Error).message}</p>`);
@@ -324,6 +439,8 @@ async function submit(e: SubmitEvent) {
   const toBoat = fulfilment() === "delivery" && deliverTo() === "boat";
   if (toBoat && !boat) return showError("Please search for your boat and pick it from the list.");
   if (toBoat && !$<HTMLInputElement>("#boat-time").value) return showError("Please say what time the boat will be there.");
+  const time = fulfilment() === "pickup" ? $<HTMLSelectElement>("#pickup-time").value : toBoat ? "" : $<HTMLSelectElement>("#delivery-time").value;
+  if (!toBoat && !time) return showError(fulfilment() === "pickup" ? "Please choose what time you'll come." : "Please choose a delivery time.");
   if (fulfilment() === "delivery" && !pin) {
     $("#map").scrollIntoView({ behavior: "smooth", block: "center" });
     return showError("Please tap the map to show us where to deliver.");
@@ -335,9 +452,9 @@ async function submit(e: SubmitEvent) {
   try {
     const r = await api<{ status_token: string; public_id: string }>("/create-order", {
       body: { name: get("name"), phone: get("phone"), fulfilment: fulfilment(), ...(fulfilment() === "delivery" && pin ? { lat: pin.lat, lng: pin.lng, address: get("address") || null } : {}),
-        ...(toBoat ? { vessel_id: boat!.id, boat_time: $<HTMLInputElement>("#boat-time").value } : {}), notes: get("notes") || null, delivery_date: date.date, items },
+        ...(toBoat ? { vessel_id: boat!.id, boat_time: $<HTMLInputElement>("#boat-time").value } : { time }), notes: get("notes") || null, delivery_date: date.date, items },
     });
-    store("alinabun.customer", { name: get("name"), phone: get("phone"), address: get("address"), pin });
+    rememberDetails({ name: get("name"), phone: get("phone"), fulfilment: fulfilment(), deliverTo: deliverTo(), address: fulfilment() === "delivery" ? get("address") : "", pin: fulfilment() === "delivery" ? pin : null, boat: toBoat ? boat : null });
     rememberOrder(r.status_token, r.public_id);
     location.href = `/order/?t=${encodeURIComponent(r.status_token)}`;
   } catch (err) {

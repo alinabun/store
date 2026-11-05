@@ -14,7 +14,7 @@ interface View {
   address: string | null;
   map_url: string | null;
   notes: string | null;
-  items: { product_id: string; product_name: string; qty: number; unit_price: string }[];
+  items: { product_id: string; product_name: string; qty: number; unit_price: string; gift_no: number }[];
   total_mvr: string;
   message: string | null;
   payment_reference: string | null;
@@ -25,7 +25,10 @@ interface View {
   paid_amount: string | null;
   overpaid_mvr: string | null;
   fulfilment: "delivery" | "pickup";
+  time_label: string | null;
   pickup_place: string | null;
+  pickup_phone: string | null;
+  pickup_map_url: string | null;
   instagram: string;
   delivery_fee_mvr: string;
   boat: { name: string; time: string | null } | null;
@@ -112,16 +115,18 @@ function paint() {
     <div class="card">
       <h2>Your order</h2>
       <table class="items">
-        ${v.items.map((i) => html`<tr><td>${i.qty} × ${i.product_name}</td><td>${mvr(Number(i.unit_price) * i.qty)}</td></tr>`)}
+        ${v.items.map((i) => html`<tr><td>${i.qty} × ${i.product_name}</td><td>${i.gift_no ? "🎁 Free" : mvr(Number(i.unit_price) * i.qty)}</td></tr>`)}
         ${Number(v.delivery_fee_mvr) > 0 ? html`<tr><td>Delivery</td><td>${mvr(v.delivery_fee_mvr)}</td></tr>` : ""}
         <tr class="total"><td>Total</td><td>${mvr(v.total_mvr)}</td></tr>
       </table>
-      <p style="margin-top:var(--space-4)"><b>${v.fulfilment === "pickup" ? "Pickup" : "Delivery"}:</b> ${v.delivery_label}<br>
+      <p style="margin-top:var(--space-4)"><b>${v.fulfilment === "pickup" ? "Pickup" : "Delivery"}:</b> ${v.delivery_label}${v.time_label ? ` · ${v.time_label}` : ""}<br>
         <b>${v.fulfilment === "pickup" ? "For" : "To"}:</b> ${v.customer_name}, ${v.phone}
         ${v.boat ? html`<br>⛴ To the boat <b>${v.boat.name}</b>${v.boat.time ? ` at ${v.boat.time}` : ""}` : ""}
         ${v.map_url ? html`<br><a href="${v.map_url}" target="_blank" rel="noopener">📍 Your delivery pin</a>` : ""}
         ${v.address ? html`<br>${v.address}` : ""}</p>
-      ${v.pickup_place ? html`<div class="notice info small">${v.pickup_place}</div>` : ""}
+      ${v.pickup_place || v.pickup_map_url || v.pickup_phone ? html`<div class="notice info small">${v.pickup_place ?? ""}
+        ${v.pickup_map_url ? html`<br><a href="${v.pickup_map_url}" target="_blank" rel="noopener">📍 Open in Google Maps</a>` : ""}
+        ${v.pickup_phone ? html`<br>Call us when you come: <a href="tel:${v.pickup_phone}">${v.pickup_phone}</a>` : ""}</div>` : ""}
       ${v.notes ? html`<p class="small muted">Notes: ${v.notes}</p>` : ""}
     </div>
 
@@ -253,7 +258,7 @@ async function cancelOrder(change: boolean) {
   try {
     view = await api<View>("/cancel-order", { body: { t: token } });
     if (change) {
-      store("alinabun.change", { date: v.delivery_date, items: v.items.map((i) => ({ product_id: i.product_id, qty: i.qty })), fulfilment: v.fulfilment, notes: v.notes });
+      store("alinabun.change", { date: v.delivery_date, items: v.items.filter((i) => !i.gift_no).map((i) => ({ product_id: i.product_id, qty: i.qty })), fulfilment: v.fulfilment, notes: v.notes });
       location.href = "/";
       return;
     }
