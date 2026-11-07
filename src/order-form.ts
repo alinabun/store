@@ -21,7 +21,7 @@ let pickupPlace = "", pickupPhone = "", pickupMap: string | null = null;
 let fee = 0; // laari; delivery fee for the current pin
 interface Vessel { id: number; name: string; operator: string | null; vessel_type: string | null; location: string | null }
 let boat: Vessel | null = null;
-let cutoff = "8 pm"; // from the server's cutoff hour
+let cutoff = "6 pm"; // from the server's cutoff hour
 let minDelivery = 0; // buns; delivery needs at least this many (from the server)
 // deno-lint-ignore no-explicit-any
 let leaflet: any = null;

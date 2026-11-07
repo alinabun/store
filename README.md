@@ -25,7 +25,7 @@ The browser never touches tables: everything goes through the `store` function.
 ## How an order flows
 
 1. `/` → `create-order`. The customer drops a pin on the map (street or satellite; their own location shows as a
-   blue dot) and may add directions. The server re-prices from `store.products`, checks the 20:00 Malé cutoff, the
+   blue dot) and may add directions. The server re-prices from `store.products`, checks the Malé cutoff (`order_cutoff_hour`, 18:00), the
    7-day booking window, off days and what's left (locked per date): before the cutoff the day before, a pre-order
    (max 50 buns per day and 50 per flavour, both editable); after it, and on the day, only the extras baked beyond
    the orders, and returns the order ID (`AB-7K4Q`) and the status token.
