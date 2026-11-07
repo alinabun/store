@@ -16,6 +16,8 @@ interface View {
   notes: string | null;
   items: { product_id: string; product_name: string; qty: number; unit_price: string; gift_no: number }[];
   total_mvr: string;
+  currency: "MVR" | "USD";
+  total_usd: string | null;  // USD orders: what the customer pays, into the USD account
   message: string | null;
   payment_reference: string | null;
   checking_by_hand: boolean;
@@ -23,7 +25,7 @@ interface View {
   bank: { bank: string; account_name: string; account_number: string } | null;
   qr: string | null;
   paid_amount: string | null;
-  overpaid_mvr: string | null;
+  overpaid_mvr: string | null; // in the order's currency
   fulfilment: "delivery" | "pickup";
   time_label: string | null;
   pickup_place: string | null;
@@ -87,8 +89,8 @@ function paint() {
 
     ${headline(v)}
     ${v.message ? html`<div class="notice bad">${v.message}</div>` : ""}
-    ${v.overpaid_mvr ? html`<div class="notice info">You sent ${mvr(v.paid_amount!)} and your order is ${mvr(v.total_mvr)}.
-      We'll message you about the extra ${mvr(v.overpaid_mvr)}.</div>` : ""}
+    ${v.overpaid_mvr ? html`<div class="notice info">You sent ${money(v, v.paid_amount!)} and your order is ${money(v, due(v))}.
+      We'll message you about the extra ${money(v, v.overpaid_mvr)}.</div>` : ""}
 
     ${v.pay_by ? html`<div class="notice warn small">Please pay by <b>${new Date(v.pay_by).toLocaleTimeString("en-GB", { timeZone: "Indian/Maldives", hour: "2-digit", minute: "2-digit" })}</b>.
       After that the order is cancelled and the buns go back on sale.</div>` : ""}
@@ -118,6 +120,7 @@ function paint() {
         ${v.items.map((i) => html`<tr><td>${i.qty} × ${i.product_name}</td><td>${i.gift_no ? "🎁 Free" : mvr(Number(i.unit_price) * i.qty)}</td></tr>`)}
         ${Number(v.delivery_fee_mvr) > 0 ? html`<tr><td>Delivery</td><td>${mvr(v.delivery_fee_mvr)}</td></tr>` : ""}
         <tr class="total"><td>Total</td><td>${mvr(v.total_mvr)}</td></tr>
+        ${v.currency === "USD" ? html`<tr class="total"><td>You pay in USD</td><td>USD ${v.total_usd}</td></tr>` : ""}
       </table>
       <p style="margin-top:var(--space-4)"><b>${v.fulfilment === "pickup" ? "Pickup" : "Delivery"}:</b> ${v.delivery_label}${v.time_label ? ` · ${v.time_label}` : ""}<br>
         <b>${v.fulfilment === "pickup" ? "For" : "To"}:</b> ${v.customer_name}, ${v.phone}
@@ -142,15 +145,20 @@ function paint() {
   else stopPolling();
 }
 
+/** What the customer pays, in the order's currency. */
+const due = (v: View) => v.currency === "USD" ? v.total_usd! : v.total_mvr;
+const money = (v: View, amount: string | number) => v.currency === "USD" ? `USD ${Number(amount).toFixed(2)}` : mvr(amount);
+
 function payBlock(v: View): Raw {
   const b = v.bank!;
+  const usd = v.currency === "USD";
   return html`
     <div class="card">
       <h2>How to pay</h2>
       <ol class="steps">
         <li>
-          <p>Transfer <b>${mvr(v.total_mvr)}</b> to this account:</p>
-          <div class="kv"><span>Amount</span><b>${v.total_mvr}</b>${copyBtn(v.total_mvr)}</div>
+          <p>Transfer <b>${money(v, due(v))}</b> to ${usd ? html`our <b>USD</b> account` : "this account"}:</p>
+          <div class="kv"><span>Amount</span><b>${due(v)}</b>${copyBtn(due(v))}</div>
           <div class="kv"><span>Bank</span><b>${b.bank}</b></div>
           <div class="kv"><span>Account name</span><b>${b.account_name}</b>${copyBtn(b.account_name)}</div>
           <div class="kv"><span>Account number</span><b>${b.account_number}</b>${copyBtn(b.account_number)}</div>
@@ -163,7 +171,8 @@ function payBlock(v: View): Raw {
             </div>` : ""}
         </li>
         <li><p>Take a screenshot of the payment confirmation.</p></li>
-        <li><p>Upload the screenshot here. Paid from MIB? That works too.</p>${uploadBlock(v)}</li>
+        <li><p>${usd ? "Upload the screenshot here. Please pay in USD from a BML account: we check payments from other banks by hand, so they take longer."
+          : "Upload the screenshot here. Paid from MIB? That works too."}</p>${uploadBlock(v)}</li>
       </ol>
     </div>`;
 }
@@ -171,8 +180,10 @@ function payBlock(v: View): Raw {
 function uploadBlock(v: View): Raw {
   const ocr = slip.ocr;
   const warnings: string[] = [];
-  if (ocr?.amount && Number(ocr.amount) !== Number(v.total_mvr)) {
-    warnings.push(`Your screenshot seems to show ${mvr(ocr.amount)}, but your order is ${mvr(v.total_mvr)}.`);
+  if (ocr?.currency && ocr.currency !== v.currency) {
+    warnings.push(`Your screenshot seems to show a payment in ${ocr.currency}, but this order is paid in ${v.currency}${v.currency === "USD" ? " (to our USD account)" : ""}.`);
+  } else if (ocr?.amount && Number(ocr.amount) !== Number(due(v))) {
+    warnings.push(`Your screenshot seems to show ${ocr.amount}, but your order is ${money(v, due(v))}.`);
   }
   const ours = v.bank?.account_number;
   if (ocr?.toAccount && ours && ocr.toAccount !== ours) {
@@ -258,7 +269,7 @@ async function cancelOrder(change: boolean) {
   try {
     view = await api<View>("/cancel-order", { body: { t: token } });
     if (change) {
-      store("alinabun.change", { date: v.delivery_date, items: v.items.filter((i) => !i.gift_no).map((i) => ({ product_id: i.product_id, qty: i.qty })), fulfilment: v.fulfilment, notes: v.notes });
+      store("alinabun.change", { date: v.delivery_date, items: v.items.filter((i) => !i.gift_no).map((i) => ({ product_id: i.product_id, qty: i.qty })), fulfilment: v.fulfilment, notes: v.notes, currency: v.currency });
       location.href = "/";
       return;
     }

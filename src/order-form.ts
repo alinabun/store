@@ -23,6 +23,7 @@ interface Vessel { id: number; name: string; operator: string | null; vessel_typ
 let boat: Vessel | null = null;
 let cutoff = "6 pm"; // from the server's cutoff hour
 let minDelivery = 0; // buns; delivery needs at least this many (from the server)
+let usdRate = 0; // MVR per USD in hundredths (from the server); 0 = no USD option
 // deno-lint-ignore no-explicit-any
 let leaflet: any = null;
 
@@ -32,6 +33,7 @@ async function load() {
     [{ products }, r] = await Promise.all([api("/catalog"), api("/delivery-dates")]);
     ({ dates, pickup_place: pickupPlace, pickup_phone: pickupPhone, pickup_map_url: pickupMap } = r);
     minDelivery = Number(r.delivery_min_buns ?? 0);
+    usdRate = r.usd_rate ? Math.round(Number(r.usd_rate) * 100) : 0;
     const hr = Number(r.cutoff_hour);
     cutoff = `${hr % 12 || 12} ${hr < 12 ? "am" : "pm"}`;
     $("#intro").textContent = `Pre-order by ${cutoff} the day before. After that, you can still order our extra buns while they last.`;
@@ -130,6 +132,16 @@ async function load() {
         <textarea id="notes" name="notes" maxlength="500" placeholder="Anything we should know?"></textarea>
       </div>
 
+      ${usdRate ? html`
+      <div class="card">
+        <h2>Pay in</h2>
+        <div class="dates" role="radiogroup" aria-label="Pay in">
+          <label><input type="radio" name="currency" value="MVR" checked><span>MVR</span></label>
+          <label><input type="radio" name="currency" value="USD"><span>USD</span></label>
+        </div>
+        <p class="hint" id="usd-hint" hidden>Prices are in MVR. In USD it's the total at ${usdRate / 100} MVR per USD, rounded up to the next 0.50. Please pay from a BML USD account.</p>
+      </div>` : ""}
+
       <div id="err" role="alert"></div>
       <button class="primary" id="submit">Place order</button>
       <p class="hint" style="text-align:center">Next, you'll see how to pay by bank transfer.</p>
@@ -160,6 +172,7 @@ async function load() {
     if ((e.target as HTMLInputElement).name === "delivery_date") refreshDay();
     if ((e.target as HTMLInputElement).name === "fulfilment") refreshFulfilment();
     if ((e.target as HTMLInputElement).name === "deliver_to") refreshDeliverTo();
+    if ((e.target as HTMLInputElement).name === "currency") update();
   });
   refreshDay();
   showSavedDetails();
@@ -261,7 +274,7 @@ function setBoat(v: Vessel | null) {
 
 /** After "Change order": the cancelled order's day, buns, delivery choice and notes, as far as they're still available. */
 function applyChange() {
-  const c = store<{ date: string; items: { product_id: string; qty: number }[]; fulfilment: string; notes: string | null }>("alinabun.change");
+  const c = store<{ date: string; items: { product_id: string; qty: number }[]; fulfilment: string; notes: string | null; currency?: string }>("alinabun.change");
   if (!c) return;
   store("alinabun.change", null);
   const dateRadio = document.querySelector<HTMLInputElement>(`input[name=delivery_date][value="${c.date}"]`);
@@ -276,6 +289,8 @@ function applyChange() {
     $(`#q-${i.product_id}`).textContent = String(n);
   }
   if (c.notes) $<HTMLTextAreaElement>("#notes").value = c.notes;
+  const cur = document.querySelector<HTMLInputElement>(`input[name=currency][value="${c.currency}"]`);
+  if (cur) cur.checked = true;
   update();
   render($("#mine"), html`<div class="notice info">Your last order was cancelled and filled in here. Change what you need, then place it again.</div>`);
 }
@@ -409,10 +424,16 @@ function update() {
     laari += Math.round(Number(p.price_mvr) * 100) * n;
   }
   const withFee = fulfilment() === "delivery" && buns ? fee : 0;
-  $("#sum").textContent = buns ? `${buns} bun${buns > 1 ? "s" : ""} · ${mvr((laari + withFee) / 100)}${withFee ? " incl. delivery" : ""}` : "No buns yet";
+  // Same rounding as the server (rules.ts usdTotal); the server's total is the one that counts.
+  const usd = currency() === "USD" ? ` = USD ${(Math.ceil(((laari + withFee) * 2) / usdRate) / 2).toFixed(2)}` : "";
+  $("#sum").textContent = buns ? `${buns} bun${buns > 1 ? "s" : ""} · ${mvr((laari + withFee) / 100)}${withFee ? " incl. delivery" : ""}${usd}` : "No buns yet";
+  const hint = document.querySelector<HTMLElement>("#usd-hint");
+  if (hint) hint.hidden = currency() !== "USD";
   if (fulfilment() === "delivery" && buns < minDelivery) $("#sum").textContent += ` · delivery is for ${minDelivery}+ buns`;
   showError("");
 }
+
+const currency = () => usdRate && document.querySelector<HTMLInputElement>("input[name=currency]:checked")?.value === "USD" ? "USD" : "MVR";
 
 function showError(msg: string) {
   render($("#err"), msg ? html`<div class="notice bad">${msg}</div>` : html``);
@@ -452,7 +473,7 @@ async function submit(e: SubmitEvent) {
   try {
     const r = await api<{ status_token: string; public_id: string }>("/create-order", {
       body: { name: get("name"), phone: get("phone"), fulfilment: fulfilment(), ...(fulfilment() === "delivery" && pin ? { lat: pin.lat, lng: pin.lng, address: get("address") || null } : {}),
-        ...(toBoat ? { vessel_id: boat!.id, boat_time: $<HTMLInputElement>("#boat-time").value } : { time }), notes: get("notes") || null, delivery_date: date.date, items },
+        ...(toBoat ? { vessel_id: boat!.id, boat_time: $<HTMLInputElement>("#boat-time").value } : { time }), notes: get("notes") || null, delivery_date: date.date, items, currency: currency() },
     });
     rememberDetails({ name: get("name"), phone: get("phone"), fulfilment: fulfilment(), deliverTo: deliverTo(), address: fulfilment() === "delivery" ? get("address") : "", pin: fulfilment() === "delivery" ? pin : null, boat: toBoat ? boat : null });
     rememberOrder(r.status_token, r.public_id);

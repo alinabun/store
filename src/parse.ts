@@ -7,7 +7,7 @@ const DIGITISH: Record<string, string> = {
   O: "0", o: "0", D: "0", Q: "0", I: "1", l: "1", i: "1", "|": "1", S: "5", s: "5", B: "8", Z: "2", z: "2", G: "6", g: "9",
 };
 
-export interface Slip { reference: string | null; amount: string | null; date: string | null; toAccount: string | null }
+export interface Slip { reference: string | null; amount: string | null; currency: "MVR" | "USD" | null; date: string | null; toAccount: string | null }
 
 export function parseSlip(text: unknown): Slip {
   const t = String(text ?? "").replace(/\r/g, "");
@@ -25,6 +25,9 @@ export function parseSlip(text: unknown): Slip {
   const amountLine = t.split("\n").find((l) => /amount/i.test(l) && money.test(l));
   const am = (amountLine ?? t).match(money);
   const amount = am ? `${am[1].replace(/,/g, "")}.${am[2]}` : null;
+  // Not in BMLPayments' parse.js: which account the money went to, from the "Amount USD 1.00" row (or anywhere).
+  const cur = (amountLine ?? t).match(/\b(MVR|USD)\b/);
+  const currency = cur ? cur[1] as "MVR" | "USD" : null;
 
   const dm = t.match(/(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})/);
   const date = dm ? `${dm[3]}-${dm[2]}-${dm[1]} ${dm[4]}:${dm[5]}` : null;
@@ -33,7 +36,7 @@ export function parseSlip(text: unknown): Slip {
   const toPart = t.slice(Math.max(0, t.search(/\bTo\b/)));
   const toAccount = toPart.match(/\b7\d{12}\b/)?.[0] ?? null;
 
-  return { reference, amount, date, toAccount };
+  return { reference, amount, currency, date, toAccount };
 }
 
 const MONTHS: Record<string, number> = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };

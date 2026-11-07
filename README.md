@@ -33,7 +33,7 @@ The browser never touches tables: everything goes through the `store` function.
    be at the pin). Delivery outside Malé adds MVR 80 (editable); pickup is free.
    Customers choose a time: delivery is ASAP (today only), 10 AM, 12 PM or 4 PM; pickup is every half hour, 10 AM to 10 PM.
    Their details (name, phone, pin or boat) are saved only on their phone, with a list to pick from and a "Clear form" button.
-2. `/order/?t=…` shows the bank details and a PayMV QR for the total (scan with the BML app, or save it and scan
+2. `/order/?t=…` shows the bank details (the USD account and amount for USD orders, with a USD QR) and a PayMV QR for the total (scan with the BML app, or save it and scan
    from photos). The customer transfers, uploads a screenshot (compressed to 1600 px in
    the browser), and OCR (Tesseract, loaded only then) fills in the BML reference. The customer checks it and sends.
 3. The server claims the reference on the ledger for **our own order total**, then posts the slip to the

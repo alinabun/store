@@ -19,7 +19,14 @@ Bank of Maldives`;
 
 Deno.test("clean slip", () => {
   assert.deepEqual(parseSlip(SLIP), {
-    reference: "BLAZ974352781671", amount: "120.00", date: "2026-10-13 17:57", toAccount: "7730000565406",
+    reference: "BLAZ974352781671", amount: "120.00", currency: "MVR", date: "2026-10-13 17:57", toAccount: "7730000565406",
+  });
+});
+
+Deno.test("USD slip (same layout, made-up sender and reference)", () => {
+  const usd = SLIP.replace("120.00\nMVR", "1.00\nUSD").replace("Amount MVR 120.00", "Amount USD 1.00").replace("7730000565406", "7730000800841");
+  assert.deepEqual(parseSlip(usd), {
+    reference: "BLAZ974352781671", amount: "1.00", currency: "USD", date: "2026-10-13 17:57", toAccount: "7730000800841",
   });
 });
 
@@ -34,7 +41,7 @@ Deno.test("amounts with thousands separators, and fallback without an Amount row
 });
 
 Deno.test("nothing recognisable", () => {
-  assert.deepEqual(parseSlip("a cat photo"), { reference: null, amount: null, date: null, toAccount: null });
+  assert.deepEqual(parseSlip("a cat photo"), { reference: null, amount: null, currency: null, date: null, toAccount: null });
   assert.equal(parseSlip("Reference BLAZ12345").reference, null); // too short
 });
 

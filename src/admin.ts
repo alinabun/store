@@ -154,7 +154,7 @@ async function orders(p: URLSearchParams) {
           <td><b>${o.public_id}</b><div class="small muted">${when(o.created_at)}</div></td>
           <td>${o.customer_name}<div class="small muted">${o.phone}</div></td>
           <td>${o.delivery_date}</td>
-          <td>${mvr(o.total_mvr)}<div class="small muted">${o.total_buns} buns</div></td>
+          <td>${mvr(o.total_mvr)}<div class="small muted">${o.currency === "USD" ? `pays USD ${o.total_usd} · ` : ""}${o.total_buns} buns</div></td>
           <td>${chip(o.status)} ${o.fulfilment === "pickup" ? html`<span class="chip">pickup</span>` : ""} ${o.entered_by ? html`<span class="chip">by us</span>` : ""} ${o.needs_review ? html`<span class="chip review">review</span>` : ""} ${String(o.on_telegram) === "false" ? html`<span class="chip review">not on Telegram</span>` : ""}</td>
         </tr>`)}
     </table></div>
@@ -333,6 +333,7 @@ async function orderDetail(id: string) {
         ${o.items.map((i: Record<string, string>) => html`<tr><td>${i.qty} × ${i.product_name}</td><td>${Number(i.gift_no) ? "🎁 Free" : mvr(Number(i.unit_price) * Number(i.qty))}</td></tr>`)}
         ${Number(o.delivery_fee_mvr) > 0 ? html`<tr><td>Delivery</td><td>${mvr(o.delivery_fee_mvr)}</td></tr>` : ""}
         <tr class="total"><td>Total</td><td>${mvr(o.total_mvr)}</td></tr>
+        ${o.currency === "USD" ? html`<tr class="total"><td>Customer pays in USD</td><td>USD ${o.total_usd}</td></tr>` : ""}
       </table>
       ${o.free_left ? html`<details style="margin-top:var(--space-3)"><summary>Add free buns</summary>
         <form id="free" class="filters" style="margin-top:var(--space-2)">
@@ -347,7 +348,7 @@ async function orderDetail(id: string) {
     <div class="card">
       <h2>Payment</h2>
       <div class="kv"><span>Reference</span><b>${o.payment_reference ?? "—"}</b></div>
-      <div class="kv"><span>Bank received</span><b>${o.paid_amount ? mvr(o.paid_amount) : "—"}</b></div>
+      <div class="kv"><span>Bank received</span><b>${o.paid_amount ? (o.currency === "USD" ? `USD ${o.paid_amount}` : mvr(o.paid_amount)) : "—"}</b></div>
       <div class="kv"><span>Booked on</span><b>${o.paid_on ?? "—"}</b></div>
       <div class="kv"><span>Paid at</span><b>${when(o.paid_at) || "—"}</b></div>
       <div class="kv"><span>Ledger checks</span><b>${o.claim_attempts}${o.last_claim_at ? ` · last ${when(o.last_claim_at)}` : ""}</b></div>
@@ -555,7 +556,9 @@ async function days() {
         <label>Instagram handle<input name="instagram" value="@${st.instagram}"></label>
         <label>Delivery fee in Malé (MVR)<input name="delivery_fee_male_mvr" inputmode="decimal" value="${st.delivery_fee_male_mvr}"></label>
         <label>Delivery fee outside Malé (MVR)<input name="delivery_fee_outside_male_mvr" inputmode="decimal" value="${st.delivery_fee_outside_male_mvr}"></label>
+        <label>USD rate (MVR per USD; blank = no USD)<input name="usd_rate" inputmode="decimal" placeholder="e.g. 15.42" value="${st.usd_rate ?? ""}"></label>
       </div>
+      <p class="hint">With a USD rate, customers can choose to pay in USD: the order total ÷ the rate, rounded up to the next 0.50, into the USD account. Changing it doesn't change orders already placed.</p>
       <label>Pickup address (shown to customers who pick up)<textarea name="pickup_place" maxlength="300">${st.pickup_place}</textarea></label>
       <label>Phone they call when they come<input name="pickup_phone" type="tel" value="${st.pickup_phone}"></label>
       <label>Pickup location on the map</label>
@@ -598,6 +601,7 @@ async function days() {
         order_cutoff_hour: n("order_cutoff_hour"), instagram: (f.elements.namedItem("instagram") as HTMLInputElement).value,
         delivery_fee_male_mvr: (f.elements.namedItem("delivery_fee_male_mvr") as HTMLInputElement).value,
         delivery_fee_outside_male_mvr: (f.elements.namedItem("delivery_fee_outside_male_mvr") as HTMLInputElement).value,
+        usd_rate: (f.elements.namedItem("usd_rate") as HTMLInputElement).value,
         pickup_place: (f.elements.namedItem("pickup_place") as HTMLTextAreaElement).value,
         pickup_phone: (f.elements.namedItem("pickup_phone") as HTMLInputElement).value,
         ...(pickupPin ? { pickup_pin: pickupPin } : {}),
@@ -849,7 +853,10 @@ async function sales(date: string) {
   const bunMax = Math.max(1, ...r.buns.map((b: BunStack) => out(b) + b.left));
   const weekMax = Math.max(1, ...r.weekdays.map((w: { avg: number | null }) => w.avg ?? 0));
   const monthMax = Math.max(1, ...r.months.map((x: { revenue: number }) => x.revenue));
-  const orderAvg = (x: Sales) => (x.orders ? (x.revenue - x.shop_revenue) / x.orders : 0);
+  // MVR orders only: USD money isn't in revenue.
+  const orderAvg = (x: Sales) => (x.orders - x.usd_orders ? (x.revenue - x.shop_revenue) / (x.orders - x.usd_orders) : 0);
+  const usd = (x: Sales) => x.revenue_usd ? `+ USD ${x.revenue_usd.toFixed(2)}` : "";
+  const sub = (...parts: string[]) => parts.filter(Boolean).join(" · ");
   const mix: [string, number][] = [["Website", m.web], ["Instagram and phone (entered by managers)", m.manager], ["Shops", m.shop]];
   shell("sales", html`
     <div class="filters">
@@ -861,10 +868,10 @@ async function sales(date: string) {
     <p class="small muted">Arrows compare with ${dayName(lw.day)}, a week before. Orders count on their delivery day.</p>
     <div class="kpis">
       ${tile("Buns sold", num(t.sold), t.given ? `+ ${t.given} given away` : "", change(t.sold, lw.sold))}
-      ${tile("Revenue", money(t.revenue), t.fees ? `incl. ${money(t.fees)} delivery` : "", change(t.revenue, lw.revenue))}
+      ${tile("Revenue", money(t.revenue), sub(t.fees ? `incl. ${money(t.fees)} delivery` : "", usd(t)), change(t.revenue, lw.revenue))}
       ${tile("Orders", num(t.orders), t.orders ? `avg ${money(orderAvg(t))}` : "", change(t.orders, lw.orders))}
       ${tile("Left over", t.made ? num(t.left) : "–", t.made ? (t.left ? `${pct(t.left, t.made)}% of ${t.made} made` : `all ${t.made} made went out`) : "nothing planned or baked")}
-      ${t.unpaid || t.unpaid_mvr ? tile("Not paid yet", money(t.unpaid_mvr), `${t.unpaid} buns`) : ""}
+      ${t.unpaid || t.unpaid_mvr || t.unpaid_usd ? tile("Not paid yet", money(t.unpaid_mvr), sub(`${t.unpaid} buns`, t.unpaid_usd ? `+ USD ${t.unpaid_usd.toFixed(2)}` : "")) : ""}
     </div>
     ${r.day_buns.length ? html`<div class="scroll"><table class="list">
       <tr><th>Bun</th><th>Made</th><th>Sold</th><th>Given away</th><th>Not paid</th><th>Left</th><th>Revenue</th><th class="wide-only" style="width:30%"></th></tr>
@@ -876,7 +883,7 @@ async function sales(date: string) {
     <p class="small muted">${span(r.range)}, arrows compare with ${span(r.prev_range)}.</p>
     <div class="kpis">
       ${tile("Buns sold", num(m.sold), m.given ? `+ ${m.given} given away` : "", change(m.sold, pm.sold))}
-      ${tile("Revenue", money(m.revenue), m.fees ? `incl. ${money(m.fees)} delivery` : "", change(m.revenue, pm.revenue))}
+      ${tile("Revenue", money(m.revenue), sub(m.fees ? `incl. ${money(m.fees)} delivery` : "", usd(m)), change(m.revenue, pm.revenue))}
       ${tile("Orders", num(m.orders), m.orders ? `avg ${money(orderAvg(m))}` : "", change(m.orders, pm.orders))}
       ${tile("Customers", num(m.customers), `${m.new_customers} new, ${m.customers - m.new_customers} came back`, change(m.customers, pm.customers))}
       ${tile("Left over", m.made ? num(m.left) : "–", m.made ? `${pct(m.left, m.made)}% of ${num(m.made)} made` : "", change(m.left, pm.left, false))}
@@ -926,7 +933,7 @@ async function sales(date: string) {
       </div>
       <div class="card">
         <h3>Payments</h3>
-        <p class="small">Not paid yet: <b>${money(m.unpaid_mvr)}</b> <span class="muted">(${m.unpaid} buns: orders waiting for payment or the bank, unpaid shop invoices)</span></p>
+        <p class="small">Not paid yet: <b>${money(m.unpaid_mvr)}</b>${m.unpaid_usd ? html` + <b>USD ${m.unpaid_usd.toFixed(2)}</b>` : ""} <span class="muted">(${m.unpaid} buns: orders waiting for payment or the bank, unpaid shop invoices)</span></p>
         <p class="small">Didn't go through: <b>${m.lost_orders}</b> ${m.lost_orders === 1 ? "order" : "orders"}, ${m.lost_buns} buns
           <span class="muted">(${m.expired} not paid in time, ${m.lost_orders - m.expired} cancelled or rejected)</span></p>
       </div>
@@ -937,13 +944,14 @@ async function sales(date: string) {
       <div class="scroll"><table class="list">
         <tr><th>Month</th><th>Buns sold</th><th>Revenue</th><th style="width:30%"></th><th>Orders</th><th>Left over</th></tr>
         ${r.months.map((x: Sales) => html`<tr data-id="${x.month}" class="${x.month === r.month ? "on" : ""}"><td>${monthName(x.month, "short")}</td><td><b>${num(x.sold)}</b></td>
-          <td>${money(x.revenue)}</td><td><div class="hbar">${x.revenue ? html`<i class="v-sold" style="width:${(x.revenue / monthMax) * 100}%"></i>` : ""}</div></td>
+          <td>${money(x.revenue)}${x.revenue_usd ? html`<div class="small muted">+ USD ${x.revenue_usd.toFixed(2)}</div>` : ""}</td><td><div class="hbar">${x.revenue ? html`<i class="v-sold" style="width:${(x.revenue / monthMax) * 100}%"></i>` : ""}</div></td>
           <td>${num(x.orders)}</td><td>${x.made ? `${num(x.left)} (${pct(x.left, x.made)}%)` : "–"}</td></tr>`)}
       </table></div>
       <p class="small muted" style="margin-top:var(--space-2)">This month so far. Tap a month to open it.</p>
     </div>
     <p class="small muted">Sold = paid orders and paid shop invoices (shops by invoice day, after their share). Made = the higher of the
-      baking plan and what the bot logged as baked. Buns sold some other way show up as left over.</p>`);
+      baking plan and what the bot logged as baked. Buns sold some other way show up as left over.
+      Revenue is MVR; orders paid in USD are shown apart (+ USD), never converted, and their buns count as sold.</p>`);
 
   const open = (d: string) => go({ tab: "sales", date: d });
   $<HTMLInputElement>("#d").onchange = (e) => open((e.target as HTMLInputElement).value);
