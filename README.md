@@ -54,6 +54,7 @@ permanent copy: search the order ID in the slips group.
 
 - **Orders**: filter by status, delivery date, "needs review"; search by order ID or phone. `/admin/?order=AB-7K4Q`
   opens one order (the Telegram caption links there).
+- **Pack**: a day's orders by time, then Malé / Hulhumalé / other / boat / pickup. Tap an order to see its buns; tick several (or a whole time) to add them up for baking or packing.
 - **New order**: past customers are suggested after 2 letters or digits of the name or phone; pick one to fill in both, or just keep typing. The time is optional. The order is posted to the Telegram group.
 - **Add free buns** (on an order): gifts or complimentary buns, with a reason. They come out of what's left that day, the total stays the same, and Sales counts them as given away.
 - **Order actions**:

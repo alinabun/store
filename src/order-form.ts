@@ -108,8 +108,9 @@ async function load() {
             <input id="boat-time" type="time">
           </div>
           <div id="delivery-time-box">
-            <label for="delivery-time">What time?</label>
-            <select id="delivery-time"></select>
+            <label for="delivery-time">Deliver after</label>
+            <select id="delivery-time" aria-describedby="delivery-time-hint"></select>
+            <div class="hint" id="delivery-time-hint">We deliver every order ourselves, between Malé and Hulhumalé, so your buns come after the time you pick, not exactly at it.</div>
           </div>
           <label id="pin-label">Where should we deliver?</label>
           <p class="hint" id="pin-hint">We deliver in Malé, Hulhulé and Hulhumalé. Tap the map to put a pin on your home. Drag the pin to move it. The blue dot is where you are now.</p>

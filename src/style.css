@@ -212,3 +212,17 @@ button.link { background: none; border: 0; padding: 0; margin-top: var(--space-1
 .sug[hidden] { display: none; }
 .sug button { display: block; width: 100%; text-align: left; background: none; color: var(--text); border: 0; border-radius: 0; padding: 8px 12px; font-weight: 500; }
 .sug button:hover, .sug button.on { background: var(--surface); }
+
+/* Pack tab: the order list, and the picked orders' buns beside it (below and pinned to the bottom on a phone). */
+.pack { display: grid; gap: var(--space-4); grid-template-columns: minmax(0, 1fr); }
+.pack aside { position: sticky; bottom: 0; max-height: 45vh; overflow-y: auto; margin: 0; box-shadow: var(--shadow-md, var(--shadow-sm)); }
+@media (min-width: 760px) {
+  .pack { grid-template-columns: minmax(0, 1fr) 320px; }
+  .pack aside { top: var(--space-4); bottom: auto; align-self: start; max-height: calc(100vh - 2 * var(--space-4)); }
+}
+.pack-slot { margin-bottom: var(--space-4); }
+.pack-slot > label { margin: 0 0 var(--space-2); padding: var(--space-2) 0; border-bottom: 2px solid var(--border-strong); }
+.pack-order { display: flex; align-items: center; gap: var(--space-3); padding: 10px; background: var(--white); border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 6px; cursor: pointer; }
+.pack-order:hover { background: var(--bg); }
+.pack-order.on { border-color: var(--dark-roast); box-shadow: inset 4px 0 0 var(--dark-roast); }
+.pack-order input { width: 20px; height: 20px; flex: none; }

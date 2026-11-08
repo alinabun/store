@@ -94,7 +94,7 @@ addEventListener("popstate", () => route());
 function shell(tab: string, body: Raw) {
   render(app, html`
     <nav class="tabs">
-      ${[["orders", "Orders"], ["sales", "Sales"], ["production", "Production"], ["days", "Days"], ["invoices", "Invoices"], ["customers", "Customers"], ["products", "Products"]].map(([k, l]) =>
+      ${[["orders", "Orders"], ["pack", "Pack"], ["sales", "Sales"], ["production", "Production"], ["days", "Days"], ["invoices", "Invoices"], ["customers", "Customers"], ["products", "Products"]].map(([k, l]) =>
         html`<button class="${tab === k ? "on" : ""}" data-tab="${k}">${l}</button>`)}
       <button class="secondary" id="out" style="margin-left:auto">Sign out</button>
     </nav>
@@ -110,6 +110,7 @@ async function route() {
     if (p.get("order")) return await orderDetail(p.get("order")!);
     if (p.get("invoice")) return await invoiceView(p.get("invoice")!);
     switch (p.get("tab")) {
+      case "pack": return await pack(p.get("date") || maleToday());
       case "sales": return await sales(p.get("date") ?? "");
       case "production": return await production(p.get("date") ?? "");
       case "days": return await days();
@@ -173,6 +174,98 @@ async function orders(p: URLSearchParams) {
   app.querySelectorAll<HTMLElement>("tr[data-id]").forEach((tr) => (tr.onclick = () => go({ order: tr.dataset.id! })));
   $("#prev")?.addEventListener("click", () => go({ ...filters, page: String(page - 1) }));
   $("#next")?.addEventListener("click", () => go({ ...filters, page: String(page + 1) }));
+}
+
+// ── Pack: a day's orders by time and area; the buns of the picked orders on the side ──
+
+type PackItem = { name: string; qty: number; free: boolean };
+type PackOrder = {
+  public_id: string; customer_name: string; phone: string; paid: boolean; fulfilment: string; time_label: string;
+  area: string; boat: string | null; address: string | null; notes: string | null; items: PackItem[];
+};
+
+async function pack(date: string) {
+  const { orders } = await call<{ orders: PackOrder[] }>(`/admin/pack?date=${date}`);
+  const day = (n: number) => new Date(Date.parse(maleToday()) + n * 86400_000).toISOString().slice(0, 10);
+  const picked = new Set<string>();
+  const slots = new Map<string, PackOrder[]>(); // the server sorts by time, so each time's orders come together
+  for (const o of orders) {
+    const k = o.fulfilment === "pickup" ? `Pickup ${o.time_label}` : o.boat ? `Boat ${o.time_label}` : o.time_label;
+    slots.set(k, [...slots.get(k) ?? [], o]);
+  }
+  const buns = (os: PackOrder[]) => os.reduce((n, o) => n + o.items.reduce((a, i) => a + i.qty, 0), 0);
+  const bunsText = (os: PackOrder[]) => `${buns(os)} bun${buns(os) === 1 ? "" : "s"}`;
+  shell("pack", html`
+    <div class="row" style="flex-wrap:wrap;margin-bottom:var(--space-4)">
+      <input type="date" id="d" value="${date}" style="max-width:180px" aria-label="Delivery date">
+      ${[[-1, "Yesterday"], [0, "Today"], [1, "Tomorrow"]].map(([n, l]) =>
+        html`<button class="${day(n as number) === date ? "" : "secondary"}" data-day="${day(n as number)}">${l}</button>`)}
+    </div>
+    ${orders.length ? html`
+    <div class="pack">
+      <div>
+        <p class="small muted" style="margin-top:0">Tap an order to see its buns. Tick several (or a whole time) to add them up.</p>
+        ${[...slots].map(([slot, os]) => html`
+          <div class="pack-slot">
+            <label class="row"><input type="checkbox" data-slot="${slot}" style="width:auto"> <b class="grow">${slot}</b>
+              <span class="small muted">${os.length} order${os.length === 1 ? "" : "s"} · ${bunsText(os)}</span></label>
+            ${os.map((o) => html`
+              <div class="pack-order" data-pid="${o.public_id}">
+                <input type="checkbox" data-pick="${o.public_id}" style="width:auto" aria-label="Pick ${o.public_id}">
+                <div class="grow"><b>${o.customer_name}</b> <span class="small muted">${o.public_id}</span>
+                  <div class="small">${o.area}${o.paid ? "" : html` · <span class="chip awaiting_bank">unpaid</span>`}</div></div>
+                <span class="small">${bunsText([o])}</span>
+              </div>`)}
+          </div>`)}
+      </div>
+      <aside class="card" id="side"></aside>
+    </div>` : html`<p class="muted">No orders for this day.</p>`}`);
+  $<HTMLInputElement>("#d").onchange = (e) => go({ tab: "pack", date: (e.target as HTMLInputElement).value });
+  app.querySelectorAll<HTMLButtonElement>("[data-day]").forEach((b) => (b.onclick = () => go({ tab: "pack", date: b.dataset.day! })));
+  if (!orders.length) return;
+
+  const side = () => {
+    const sel = orders.filter((o) => picked.has(o.public_id));
+    const os = sel.length ? sel : orders;
+    const total = new Map<string, { qty: number; free: number }>(); // first seen keeps the shop's bun order
+    for (const i of os.flatMap((o) => o.items)) {
+      const t = total.get(i.name) ?? { qty: 0, free: 0 };
+      total.set(i.name, { qty: t.qty + i.qty, free: t.free + (i.free ? i.qty : 0) });
+    }
+    const one = sel.length === 1 ? sel[0] : null;
+    render($("#side"), html`
+      <h3 style="margin-top:0">${one ? `${one.public_id} · ${one.customer_name}` : sel.length ? `${sel.length} orders` : `Whole day · ${orders.length} orders`}</h3>
+      ${one ? html`<p class="small" style="margin-top:0">${one.fulfilment === "pickup" ? "Pickup" : one.boat ? `Boat ${one.boat}` : one.area} · ${one.time_label}<br>
+        ${one.phone}${one.address ? html`<br>${one.address}` : ""}${one.notes ? html`<br><i>${one.notes}</i>` : ""}</p>` : ""}
+      <table class="items">
+        ${[...total].map(([name, t]) => html`<tr><td>${name}${t.free ? html` <span class="small muted">(${t.free} free)</span>` : ""}</td><td><b>${t.qty}</b></td></tr>`)}
+        <tr class="total"><td>Total</td><td>${buns(os)}</td></tr>
+      </table>
+      ${one ? html`<p class="small" style="margin-bottom:0"><a href="?order=${one.public_id}">Open order</a>${one.paid ? "" : " · not paid yet"}</p>` : ""}
+      ${sel.length ? html`<button class="secondary" id="clear" style="margin-top:var(--space-3)">Clear</button>` : ""}`);
+    $("#clear")?.addEventListener("click", () => { picked.clear(); sync(); });
+  };
+  const sync = () => {
+    app.querySelectorAll<HTMLInputElement>("[data-pick]").forEach((c) => (c.checked = picked.has(c.dataset.pick!)));
+    app.querySelectorAll<HTMLElement>("[data-pid]").forEach((r) => r.classList.toggle("on", picked.has(r.dataset.pid!)));
+    app.querySelectorAll<HTMLInputElement>("[data-slot]").forEach((c) => {
+      const ids = slots.get(c.dataset.slot!)!.map((o) => o.public_id);
+      c.checked = ids.every((id) => picked.has(id));
+      c.indeterminate = !c.checked && ids.some((id) => picked.has(id));
+    });
+    side();
+  };
+  app.querySelectorAll<HTMLElement>("[data-pid]").forEach((r) => (r.onclick = (e) => {
+    const id = r.dataset.pid!;
+    if ((e.target as HTMLElement).matches("[data-pick]")) picked.has(id) ? picked.delete(id) : picked.add(id); // the tick box adds to the pick
+    else { picked.clear(); picked.add(id); } // tapping the order shows just that one
+    sync();
+  }));
+  app.querySelectorAll<HTMLInputElement>("[data-slot]").forEach((c) => (c.onchange = () => {
+    for (const o of slots.get(c.dataset.slot!)!) c.checked ? picked.add(o.public_id) : picked.delete(o.public_id);
+    sync();
+  }));
+  sync();
 }
 
 /** An order taken by a manager (DM, phone, in person) or a giveaway. It holds buns like a customer order but never expires. */
