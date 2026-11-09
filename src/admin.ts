@@ -94,7 +94,7 @@ addEventListener("popstate", () => route());
 function shell(tab: string, body: Raw) {
   render(app, html`
     <nav class="tabs">
-      ${[["orders", "Orders"], ["pack", "Pack"], ["sales", "Sales"], ["production", "Production"], ["days", "Days"], ["invoices", "Invoices"], ["customers", "Customers"], ["products", "Products"]].map(([k, l]) =>
+      ${[["orders", "Orders"], ["pack", "Pack"], ["sales", "Sales"], ["visitors", "Visitors"], ["production", "Production"], ["days", "Days"], ["invoices", "Invoices"], ["customers", "Customers"], ["products", "Products"]].map(([k, l]) =>
         html`<button class="${tab === k ? "on" : ""}" data-tab="${k}">${l}</button>`)}
       <button class="secondary" id="out" style="margin-left:auto">Sign out</button>
     </nav>
@@ -105,6 +105,8 @@ function shell(tab: string, body: Raw) {
 
 async function route() {
   if (!session) return showLogin();
+  // This phone is ours: the tracker on our three sites leaves out phones with this cookie (track.ts).
+  document.cookie = `ab_staff=1; max-age=${400 * 86400}; path=/; samesite=lax${location.hostname.endsWith("alinabun.com") ? "; domain=alinabun.com; secure" : ""}`;
   const p = params();
   try {
     if (p.get("order")) return await orderDetail(p.get("order")!);
@@ -112,6 +114,7 @@ async function route() {
     switch (p.get("tab")) {
       case "pack": return await pack(p.get("date") || maleToday());
       case "sales": return await sales(p.get("date") ?? "");
+      case "visitors": return await visitors(p.get("from") ?? "", p.get("to") ?? "");
       case "production": return await production(p.get("date") ?? "");
       case "days": return await days();
       case "invoices": return p.get("new") ? await newInvoice() : await invoices();
@@ -1114,6 +1117,164 @@ function dailyChart(r: Sales) {
     if (i + 1 === sel) marks.push(html`<rect x="${f(bx)}" y="${T + ph + 3}" width="${f(bw)}" height="2" class="sel"/>`);
   }
   return html`<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Buns made and sold each day of ${monthName(r.month)}">${marks}</svg>`;
+}
+
+// ── Visitors ──
+
+// deno-lint-ignore no-explicit-any
+type Visitors = any; // GET /admin/visitors (store function, rules.ts visitorsReport)
+const addDay = (d: string, n: number) => new Date(Date.parse(d) + n * 86_400_000).toISOString().slice(0, 10);
+const duration = (s: number) => s < 60 ? `${s} s` : `${Math.floor(s / 60)} min${s % 60 ? ` ${s % 60} s` : ""}`;
+const visitsText = (n: number) => `${num(n)} ${n === 1 ? "visit" : "visits"}`;
+/** A label, a number and a bar against `max`, with a line underneath. */
+const barRow = (label: unknown, value: unknown, part: number, max: number, sub: unknown = "") => html`<div class="bunrow">
+  <div class="row between"><span>${label}</span><span>${value}</span></div>
+  <div class="hbar">${part ? html`<i class="v-sold" style="width:${(part / Math.max(1, max)) * 100}%"></i>` : ""}</div>
+  ${sub ? html`<div class="small muted">${sub}</div>` : ""}</div>`;
+
+async function visitors(from: string, to: string) {
+  const r: Visitors = await call(`/admin/visitors?${new URLSearchParams({ from, to })}`);
+  tipBox.hidden = true;
+  const t = r.totals, pv = r.prev;
+  const days = r.days.length;
+  const title = days === 1 ? (r.to === r.today ? "Today" : dayName(r.to)) : `${dayName(r.from)} – ${dayName(r.to)}`;
+  const ranges: [string, string, string][] = [
+    ["Today", r.today, r.today], ["Yesterday", addDay(r.today, -1), addDay(r.today, -1)],
+    ["7 days", addDay(r.today, -6), r.today], ["30 days", addDay(r.today, -29), r.today],
+  ];
+  const stuck = r.stuck.filter((x: Visitors) => x.visits);
+  const maxSource = Math.max(1, ...r.sources.map((x: Visitors) => x.visits));
+  const first = r.funnel[0].visits;
+  const hour = (h: number) => `${h % 12 || 12} ${h < 12 ? "am" : "pm"}`;
+  const stale = r.buffer.oldest && Date.now() - Date.parse(r.buffer.oldest) > 2 * 86_400_000;
+  const taps = (x: Visitors, none: string) => x.taps.length
+    ? x.taps.map((tap: Visitors) => barRow(tap.label, html`<b>${tap.visits}</b> · ${pct(tap.visits, x.visits)}%`, tap.visits, x.visits))
+    : html`<p class="muted small">${none}</p>`;
+  shell("visitors", html`
+    <div class="filters">
+      <label>From<input type="date" id="from" value="${r.from}" max="${r.to}"></label>
+      <label>To<input type="date" id="to" value="${r.to}" min="${r.from}" max="${r.today}"></label>
+    </div>
+    <div class="row" style="flex-wrap:wrap;gap:var(--space-2);margin:calc(-1 * var(--space-2)) 0 var(--space-4)">
+      ${ranges.map(([label, f, to]) => html`<button type="button" class="${f === r.from && to === r.to ? "" : "secondary"}" data-from="${f}" data-to="${to}">${label}</button>`)}
+    </div>
+    ${stale ? html`<div class="notice warn">The Mac hasn't copied the visitors' raw data since ${when(r.buffer.oldest)}. Is it on, with the drive plugged in?
+      The numbers here are fine; Supabase just keeps more until it runs (analytics/README.md).</div>` : ""}
+
+    <h2>${title}</h2>
+    <p class="small muted">Arrows compare with the ${days === 1 ? "day" : `${days} days`} before. Phones that have opened this admin page aren't counted.</p>
+    <div class="kpis">
+      ${tile("Visits", num(t.visits), `${num(t.visitors)} ${t.visitors === 1 ? "phone" : "phones"}, ${num(t.new_visitors)} new`, change(t.visits, pv.visits))}
+      ${tile("Opened the store", num(t.store), t.visits ? `${pct(t.store, t.visits)}% of visits` : "", change(t.store, pv.store))}
+      ${tile("Ordered", num(t.ordered), t.store ? `${pct(t.ordered, t.store)}% of store visits · ${t.paid} paid` : "", change(t.ordered, pv.ordered))}
+      ${tile("Saw no stock", num(t.no_stock), `${num(t.no_stock_left)} left without ordering`)}
+      ${tile("Something stopped them", num(t.stopped), `${num(t.stopped_left)} left without ordering`)}
+    </div>
+
+    ${days > 1 ? html`<div class="card">
+      <h3>Visits each day</h3>
+      ${columns(r.days.map((d: Visitors, i: number) => ({
+        value: d.visits, tip: `${dayName(d.day)}\n${visitsText(d.visits)} · ${d.store} opened the store · ${d.ordered} ordered`,
+        label: String(Number(d.day.slice(8))), tick: days <= 14 || i % 7 === 0 || i === days - 1,
+      })), "Visits each day")}
+      <details><summary class="small">As a table</summary><div class="scroll"><table class="list">
+        <tr><th>Day</th><th>Visits</th><th>Opened the store</th><th>Ordered</th></tr>
+        ${r.days.map((d: Visitors) => html`<tr><td>${dayName(d.day)}</td><td><b>${d.visits}</b></td><td>${d.store}</td><td>${d.ordered}</td></tr>`)}
+      </table></div></details>
+    </div>` : ""}
+
+    <div class="grid2">
+      <div class="card">
+        <h3>Where they came from</h3>
+        ${r.sources.length ? r.sources.map((x: Visitors) => barRow(html`<b>${x.label}</b>`, html`<b>${x.visits}</b> · ${pct(x.visits, t.visits)}%`, x.visits, maxSource,
+          `${x.store} opened the store · ${x.ordered} ordered${x.paid ? ` · ${x.paid} paid` : ""}${x.hosts.length ? ` · ${x.hosts.map((h: Visitors) => `${h.m} (${h.count})`).join(", ")}` : ""}`))
+          : html`<p class="muted">No visits yet.</p>`}
+        <p class="small muted" style="margin-top:var(--space-3)">Box QR code: links.alinabun.com opened with no app or website before it, which is what a phone camera does.</p>
+      </div>
+      <div class="card">
+        <h3>On the store</h3>
+        ${r.funnel.map((f: Visitors) => barRow(f.label, html`<b>${f.visits}</b> · ${pct(f.visits, first)}%`, f.visits, first))}
+        ${r.store_secs !== null ? html`<p class="small muted" style="margin-top:var(--space-3)">Half the visits that opened the store stayed longer than ${duration(r.store_secs)}.</p>` : ""}
+        ${r.store_taps.taps.length ? html`<h3 style="margin-top:var(--space-4)">Paying</h3>${taps(r.store_taps, "")}` : ""}
+      </div>
+      <div class="card">
+        <h3>What stopped them</h3>
+        <p class="small muted">Visits that ran into each, and how many of those didn't order, then or later.</p>
+        ${stuck.length ? stuck.map((x: Visitors) => html`<div class="bunrow">
+          <div class="row between"><span>${x.label}</span><span><b>${x.visits}</b> · ${x.left} left</span></div>
+          ${x.messages.length ? html`<details class="small"><summary>What the page said</summary>
+            ${x.messages.map((m: Visitors) => html`<div>${m.m} <span class="muted">× ${m.count}</span></div>`)}</details>` : ""}
+        </div>`) : html`<p class="muted">Nothing stopped anyone.</p>`}
+      </div>
+      <div class="card">
+        <h3>Buns they wanted but couldn't get</h3>
+        <p class="small muted">Tapped + on a bun that was sold out, or wanted more than were left.</p>
+        ${r.wanted.length ? r.wanted.map((w: Visitors) => html`<div class="bunrow">
+          <div class="row between"><b>${w.name}</b><span><b>${w.visits}</b> ${w.visits === 1 ? "visit" : "visits"} · ${w.left} left</span></div>
+          ${w.dates.length ? html`<div class="small muted">For ${w.dates.map(dayName).join(", ")}</div>` : ""}
+        </div>`) : html`<p class="muted">Nobody ran out of a bun they wanted.</p>`}
+        ${r.pins.length ? html`<h3 style="margin-top:var(--space-4)">Pins outside our delivery area</h3>
+          <p class="small muted">Where people wanted delivery that we don't cover, to about 1 km.</p>
+          ${r.pins.map((x: Visitors) => html`<div class="small"><a href="https://www.google.com/maps?q=${x.m.replace(" ", "")}" target="_blank" rel="noopener">${x.m}</a> × ${x.count}</div>`)}` : ""}
+      </div>
+      <div class="card">
+        <h3>links.alinabun.com</h3>
+        <p class="small">${visitsText(r.links.visits)}${r.links.visits ? ` · ${r.links.clips} watched a kitchen clip, ${r.links.all_clips} all five` : ""}</p>
+        ${taps(r.links, "No taps yet.")}
+      </div>
+      <div class="card">
+        <h3>alinabun.com</h3>
+        <p class="small">${visitsText(r.main.visits)}</p>
+        ${taps(r.main, "No taps yet.")}
+      </div>
+      <div class="card">
+        <h3>Phones</h3>
+        ${r.phones.map((x: Visitors) => barRow(x.label, html`<b>${x.visits}</b> · ${x.ordered} ordered`, x.visits, t.visits))}
+        <h3 style="margin-top:var(--space-4)">Opened in</h3>
+        ${r.browsers.map((x: Visitors) => barRow(x.label, html`<b>${x.visits}</b> · ${x.ordered} ordered`, x.visits, t.visits))}
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Busiest hours</h3>
+      <p class="small muted">Visits by the hour they started, Malé time.</p>
+      ${columns(r.hours.map((n: number, h: number) => ({ value: n, tip: `${hour(h)}–${hour((h + 1) % 24)}\n${visitsText(n)}`, label: hour(h), tick: h % 3 === 0 })), "Visits by hour")}
+    </div>
+
+    <div class="card">
+      <h3>Problems on the pages</h3>
+      ${r.errors.length ? r.errors.map((x: Visitors) => html`<div class="small">${x.m} <span class="muted">× ${x.count}</span></div>`) : html`<p class="muted small">No errors.</p>`}
+    </div>
+    <p class="small muted">${r.traced} of the ${r.web_orders} website orders placed in these days came from visits we saw; the rest came from phones that
+      block our counter. Supabase keeps one small row per visit; the Mac keeps everything (${num(r.buffer.events)} events waiting for its next daily copy).</p>`);
+
+  const open = (f: string, to: string) => go({ tab: "visitors", from: f, to });
+  $<HTMLInputElement>("#from").onchange = (e) => open((e.target as HTMLInputElement).value, r.to);
+  $<HTMLInputElement>("#to").onchange = (e) => open(r.from, (e.target as HTMLInputElement).value);
+  app.querySelectorAll<HTMLButtonElement>("[data-from]").forEach((b) => (b.onclick = () => open(b.dataset.from!, b.dataset.to!)));
+}
+
+/** One series of columns (visits per day or per hour), each with a tooltip. */
+function columns(points: { value: number; tip: string; label: string; tick: boolean }[], label: string) {
+  const W = Math.round(Math.max(280, Math.min(940, app.clientWidth - 34))), H = 170, L = 30, T = 8, B = 24;
+  const ph = H - T - B, band = (W - L) / points.length, bw = Math.max(3, Math.min(18, band - 4));
+  const peak = Math.max(1, ...points.map((p) => p.value));
+  const step = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000].find((s) => peak / s <= 4) ?? 2000;
+  const max = Math.ceil(peak / step) * step;
+  const py = (v: number) => T + ph - (v / max) * ph;
+  const f = (x: number) => x.toFixed(1);
+  const marks: Raw[] = [];
+  for (let v = 0; v <= max; v += step) {
+    marks.push(html`<line x1="${L}" x2="${W}" y1="${f(py(v))}" y2="${f(py(v))}" class="${v ? "grid" : "axis"}"/><text x="${L - 6}" y="${f(py(v) + 4)}" class="tick" text-anchor="end">${v}</text>`);
+  }
+  points.forEach((p, i) => {
+    const x = L + i * band, bx = x + (band - bw) / 2, top = py(p.value), bottom = py(0);
+    const rr = Math.min(4, bottom - top, bw / 2); // round only the top end
+    if (p.value) marks.push(html`<path class="v-sold" d="M${f(bx)},${f(bottom)}V${f(top + rr)}Q${f(bx)},${f(top)} ${f(bx + rr)},${f(top)}H${f(bx + bw - rr)}Q${f(bx + bw)},${f(top)} ${f(bx + bw)},${f(top + rr)}V${f(bottom)}Z"/>`);
+    marks.push(html`<rect x="${f(x)}" y="${T}" width="${f(band)}" height="${ph}" class="hit" data-tip="${p.tip}" tabindex="0" aria-label="${p.tip.replace(/\n/g, ", ")}"/>`);
+    if (p.tick) marks.push(html`<text x="${f(x + band / 2)}" y="${H - 6}" class="tick" text-anchor="middle">${p.label}</text>`);
+  });
+  return html`<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${label}">${marks}</svg>`;
 }
 
 async function products() {

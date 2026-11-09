@@ -1,6 +1,7 @@
 // "/" — pick buns, a day, and details; the server re-prices everything.
 import { $, api, forgetOrder, html, mvr, raw, rememberOrder, render, savedOrders, store } from "./lib.ts";
 import { type Pin, pinPicker } from "./map.ts";
+import { flush, track } from "./track.ts";
 
 interface Product { id: string; name: string; description: string | null; price_mvr: string; image_url: string | null }
 interface DeliveryDate {
@@ -37,7 +38,13 @@ async function load() {
     const hr = Number(r.cutoff_hour);
     cutoff = `${hr % 12 || 12} ${hr < 12 ? "am" : "pm"}`;
     $("#intro").textContent = `Pre-order by ${cutoff} the day before. After that, you can still order our extra buns while they last.`;
+    // What this visitor saw on sale: the Visitors tab counts who came when buns were gone.
+    track("menu", {
+      today: r.today, open: dates.some((d) => d.available),
+      days: dates.map((d) => ({ date: d.date, kind: d.kind, state: d.closed ? "closed" : d.available ? "open" : "sold_out", left: d.left, del: d.delivery_open, buns: d.products })),
+    });
   } catch (e) {
+    track("menu", { failed: (e as Error).message });
     render(app, html`<div class="notice bad">${(e as Error).message}</div><button onclick="location.reload()">Try again</button>`);
     return;
   }
@@ -156,8 +163,10 @@ async function load() {
     const id = b.dataset.id!;
     const total = [...qty.values()].reduce((a, n) => a + n, 0);
     const step = Number(b.dataset.step);
-    const max = Math.min(MAX_PER_LINE, day()?.products[id] ?? 0);
-    const next = Math.max(0, Math.min(max, (qty.get(id) ?? 0) + step));
+    const left = day()?.products[id] ?? 0, max = Math.min(MAX_PER_LINE, left), have = qty.get(id) ?? 0;
+    const next = Math.max(0, Math.min(max, have + step));
+    if (step > 0 && have >= left && left < MAX_PER_LINE) once(`want:${id}:${day()?.date}`, "blocked", { why: left ? "too_many" : "sold_out", bun: id, date: day()?.date, left });
+    if (step > 0 && next > have) once(`add:${id}`, "add", { bun: id, date: day()?.date });
     if (step > 0 && total >= MAX_BUNS) return showError(`The most you can order at once is ${MAX_BUNS} buns.`);
     qty.set(id, next);
     $(`#q-${id}`).textContent = String(next);
@@ -169,7 +178,17 @@ async function load() {
     showError("");
     quoteFee();
   }).catch(() => render($("#map"), html`<div class="notice bad">The map didn't load. Please check your internet and refresh the page.</div>`));
+  // A tap on a day or option that can't be chosen: what they wanted and couldn't have.
+  $("#f").addEventListener("click", (e) => {
+    const off = (e.target as Element).closest("label")?.querySelector<HTMLInputElement>("input:disabled");
+    if (off?.name === "delivery_date") {
+      once(`day:${off.value}`, "blocked", { why: dates.find((d) => d.date === off.value)?.closed ? "day_closed" : "day_sold_out", date: off.value });
+    }
+    if (off?.name === "fulfilment") once(`f:${off.value}:${day()?.date}`, "blocked", { why: off.value === "delivery" ? "delivery_full" : "pickup_closed", date: day()?.date });
+  });
+  $("#name").closest(".card")!.addEventListener("focusin", () => track("start"), { once: true });
   $("#f").addEventListener("change", (e) => {
+    if ((e.target as HTMLInputElement).name === "delivery_date") track("day", { date: day()?.date });
     if ((e.target as HTMLInputElement).name === "delivery_date") refreshDay();
     if ((e.target as HTMLInputElement).name === "fulfilment") refreshFulfilment();
     if ((e.target as HTMLInputElement).name === "deliver_to") refreshDeliverTo();
@@ -184,6 +203,14 @@ async function load() {
   $("#clear").onclick = clearForm;
   $("#go").onclick = () => $("#submit").scrollIntoView({ behavior: "smooth", block: "center" });
   $<HTMLFormElement>("#f").onsubmit = submit;
+}
+
+/** Track something once per page (a bun tapped ten times is one want). */
+const told = new Set<string>();
+function once(key: string, name: string, props: Record<string, unknown>) {
+  if (told.has(key)) return;
+  told.add(key);
+  track(name, props);
 }
 
 // ── Details saved on this phone (never on the server: a phone number must not reveal anyone's address) ──
@@ -387,6 +414,8 @@ async function quoteFee() {
     $("#fee-status").textContent = r.in_male ? `Delivery in Malé: ${mvr(r.fee_mvr)}.` : `Outside Malé: delivery fee ${mvr(r.fee_mvr)}.`;
   } catch (e) {
     $("#fee-status").textContent = (e as Error).message; // e.g. outside the delivery area
+    // Where we don't deliver yet, to about 1 km (the server rounds it too).
+    if ((e as { status?: number }).status) track("blocked", { why: "pin", m: (e as Error).message, lat: Math.round(pin.lat * 100) / 100, lng: Math.round(pin.lng * 100) / 100 });
   }
   update();
 }
@@ -436,7 +465,8 @@ function update() {
 
 const currency = () => usdRate && document.querySelector<HTMLInputElement>("input[name=currency]:checked")?.value === "USD" ? "USD" : "MVR";
 
-function showError(msg: string) {
+function showError(msg: string, why = "form", code?: number) {
+  if (msg) track("blocked", { why, m: msg, code });
   render($("#err"), msg ? html`<div class="notice bad">${msg}</div>` : html``);
   if (msg) $("#err").scrollIntoView({ behavior: "smooth", block: "center" });
 }
@@ -468,6 +498,10 @@ async function submit(e: SubmitEvent) {
     return showError("Please tap the map to show us where to deliver.");
   }
 
+  track("submit", {
+    date: date.date, kind: date.kind, buns, items: Object.fromEntries(items.map((i) => [i.product_id, i.qty])), f: fulfilment(), boat: toBoat,
+    time, cur: currency(), saved: !!document.querySelector<HTMLSelectElement>("#saved")?.value,
+  });
   const btn = $<HTMLButtonElement>("#submit");
   btn.disabled = true;
   btn.textContent = "Placing your order…";
@@ -478,9 +512,11 @@ async function submit(e: SubmitEvent) {
     });
     rememberDetails({ name: get("name"), phone: get("phone"), fulfilment: fulfilment(), deliverTo: deliverTo(), address: fulfilment() === "delivery" ? get("address") : "", pin: fulfilment() === "delivery" ? pin : null, boat: toBoat ? boat : null });
     rememberOrder(r.status_token, r.public_id);
+    track("order", { o: r.public_id });
+    flush();
     location.href = `/order/?t=${encodeURIComponent(r.status_token)}`;
   } catch (err) {
-    showError((err as Error).message);
+    showError((err as Error).message, "server", (err as { status?: number }).status);
     btn.disabled = false;
     btn.textContent = "Place order";
   }

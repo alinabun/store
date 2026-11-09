@@ -64,7 +64,9 @@ document.addEventListener("click", async (e) => {
   setTimeout(() => (btn.textContent = label), 1500);
 });
 
-export const copyBtn = (text: string, label = "Copy") => html`<button type="button" class="copy" data-copy="${text}">${label}</button>`;
+/** `track` names the tap for the Visitors tab (pages with the tracker only). */
+export const copyBtn = (text: string, label = "Copy", track = "") =>
+  html`<button type="button" class="copy" data-copy="${text}" data-track="${track}">${label}</button>`;
 
 export function store<T>(key: string, value?: T): T | null {
   try {

@@ -3,6 +3,7 @@ import { compressImage, readText, uploadTo } from "./image.ts";
 import { $, api, copyBtn, html, igLink, mvr, raw, type Raw, rememberOrder, render, store } from "./lib.ts";
 import { type MibSlip, parseMibSlip, parseSlip, type Slip } from "./parse.ts";
 import { qrPngUrl, qrSvg } from "./qr.ts";
+import { track } from "./track.ts";
 
 interface View {
   public_id: string;
@@ -56,8 +57,10 @@ async function load(quiet = false) {
   try {
     view = await api<View>(`/order-status?t=${encodeURIComponent(token)}`);
     rememberOrder(token, view.public_id);
+    if (!quiet) track("order_view", { o: view.public_id, status: view.status });
     paint();
   } catch (e) {
+    if (!quiet) track("order_view", { failed: (e as Error).message });
     if (!quiet) render(app, html`<div class="notice bad">${(e as Error).message}</div>`);
   }
 }
@@ -158,15 +161,15 @@ function payBlock(v: View): Raw {
       <ol class="steps">
         <li>
           <p>Transfer <b>${money(v, due(v))}</b> to ${usd ? html`our <b>USD</b> account` : "this account"}:</p>
-          <div class="kv"><span>Amount</span><b>${due(v)}</b>${copyBtn(due(v))}</div>
+          <div class="kv"><span>Amount</span><b>${due(v)}</b>${copyBtn(due(v), "Copy", "copy_amount")}</div>
           <div class="kv"><span>Bank</span><b>${b.bank}</b></div>
-          <div class="kv"><span>Account name</span><b>${b.account_name}</b>${copyBtn(b.account_name)}</div>
-          <div class="kv"><span>Account number</span><b>${b.account_number}</b>${copyBtn(b.account_number)}</div>
+          <div class="kv"><span>Account name</span><b>${b.account_name}</b>${copyBtn(b.account_name, "Copy", "copy_name")}</div>
+          <div class="kv"><span>Account number</span><b>${b.account_number}</b>${copyBtn(b.account_number, "Copy", "copy_account")}</div>
           ${v.qr ? html`
             <div class="paymv-pay">
               <p style="margin:0"><b>Or scan this with the BML app.</b> The account and amount fill in by themselves.</p>
               <div class="paymv">${raw(qrSvg(v.qr))}</div>
-              <a class="btn secondary-btn" href="${qrPngUrl(v.qr)}" download="alina-bun-${v.public_id}.png">Save QR code</a>
+              <a class="btn secondary-btn" href="${qrPngUrl(v.qr)}" download="alina-bun-${v.public_id}.png" data-track="save_qr">Save QR code</a>
               <p class="hint">On this phone? Save it, then in the BML app choose to scan a QR code from your photos.</p>
             </div>` : ""}
         </li>
@@ -247,6 +250,7 @@ function wire() {
     check.onclick = async () => {
       check.disabled = true;
       check.textContent = "Checking…";
+      track("check");
       try {
         view = await api<View>("/check-payment", { body: { t: token } });
         pollUntil = Date.now() + 10 * 60_000;
@@ -268,6 +272,7 @@ async function cancelOrder(change: boolean) {
   for (const b of ["#cancel", "#change"]) $<HTMLButtonElement>(b).disabled = true;
   try {
     view = await api<View>("/cancel-order", { body: { t: token } });
+    track("cancel", { o: v.public_id, change });
     if (change) {
       store("alinabun.change", { date: v.delivery_date, items: v.items.filter((i) => !i.gift_no).map((i) => ({ product_id: i.product_id, qty: i.qty })), fulfilment: v.fulfilment, notes: v.notes, currency: v.currency });
       location.href = "/";
@@ -288,6 +293,7 @@ async function pick(file: File) {
   }
   if (slip.preview) URL.revokeObjectURL(slip.preview);
   Object.assign(slip, { path: null, ocr: null, mib: null, bank: "bml", error: null, uploading: true, reading: true, preview: URL.createObjectURL(file) });
+  track("upload");
   paint();
   const blob = await compressImage(file);
   // Upload and OCR run side by side; the customer can type the reference while OCR works.
@@ -315,13 +321,17 @@ async function pick(file: File) {
     slip.path = path;
   } catch (e) {
     slip.error = (e as Error).message;
+    track("blocked", { why: "upload", m: slip.error });
   }
   slip.uploading = false;
   paint();
 }
 
 async function submit() {
-  const err = (m: string) => render($("#send-err"), html`<div class="notice bad" style="margin-top:var(--space-3)">${m}</div>`);
+  const err = (m: string, code?: number) => {
+    track("blocked", { why: "pay", m, code });
+    render($("#send-err"), html`<div class="notice bad" style="margin-top:var(--space-3)">${m}</div>`);
+  };
   let pay: Record<string, unknown>;
   if (slip.bank === "mib") {
     const at = $<HTMLInputElement>("#mib-at").value, name = $<HTMLInputElement>("#mib-name").value.trim();
@@ -339,12 +349,13 @@ async function submit() {
   btn.textContent = "Sending…";
   try {
     view = await api<View>("/submit-payment", { body: { t: token, path: slip.path, ...pay } });
+    track("send", { o: view.public_id, bank: slip.bank });
     Object.assign(slip, { path: null, ocr: null, mib: null, bank: "bml", preview: null, error: null });
     pollUntil = Date.now() + 10 * 60_000;
     paint();
     window.scrollTo({ top: 0, behavior: "smooth" });
   } catch (e) {
-    err((e as Error).message);
+    err((e as Error).message, (e as { status?: number }).status);
     btn.disabled = false;
     btn.textContent = "Send payment";
   }

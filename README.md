@@ -22,6 +22,11 @@ src/                page scripts, styles (brand tokens copied from alinabun-site
 Real static pages with query params, so a refresh never 404s on Pages.
 The browser never touches tables: everything goes through the `store` function.
 
+`src/track.ts` is our own analytics on the two customer pages (the Visitors tab): a random id per phone and per visit
+(cookies on .alinabun.com, shared with the other two sites), small batches to `POST /e`, never anything typed. Tag a tap
+with `data-track="name"` to count it; links to other sites are counted by their host. The backend's `rules.ts`
+`EVENT_PROPS` lists everything the pages may send.
+
 ## How an order flows
 
 1. `/` → `create-order`. The customer drops a pin on the map (street or satellite; their own location shows as a
@@ -55,6 +60,11 @@ permanent copy: search the order ID in the slips group.
 - **Orders**: filter by status, delivery date, "needs review"; search by order ID or phone. `/admin/?order=AB-7K4Q`
   opens one order (the Telegram caption links there).
 - **Pack**: a day's orders by time, then Malé / Hulhumalé / other / boat / pickup. Tap an order to see its buns; tick several (or a whole time) to add them up for baking or packing.
+- **Visitors**: our own analytics for this store, links.alinabun.com and alinabun.com. Visits per day and hour, where they came
+  from (box QR code, Instagram, TikTok, Google…), the store step by step from opening it to paying, what stopped people
+  (nothing on sale, today sold out, a sold-out bun, a closed day, delivery full, a pin outside the area, form and payment
+  messages) and whether they left, buns wanted but sold out, taps on the links page and alinabun.com, phones and in-app
+  browsers, page errors. Any phone that opens this admin page gets an `ab_staff` cookie and isn't counted.
 - **New order**: past customers are suggested after 2 letters or digits of the name or phone; pick one to fill in both, or just keep typing. The time is optional. The order is posted to the Telegram group.
 - **Add free buns** (on an order): gifts or complimentary buns, with a reason. They come out of what's left that day, the total stays the same, and Sales counts them as given away.
 - **Order actions**:
