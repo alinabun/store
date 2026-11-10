@@ -2,7 +2,7 @@
 import { compressImage, readText, uploadTo } from "./image.ts";
 import { $, api, copyBtn, html, igLink, mvr, raw, type Raw, rememberOrder, render, store } from "./lib.ts";
 import { type MibSlip, parseMibSlip, parseSlip, type Slip } from "./parse.ts";
-import { qrPngUrl, qrSvg } from "./qr.ts";
+import { qrPngUrl } from "./qr.ts";
 import { track } from "./track.ts";
 
 interface View {
@@ -160,18 +160,27 @@ function payBlock(v: View): Raw {
       <h2>How to pay</h2>
       <ol class="steps">
         <li>
-          <p>Transfer <b>${money(v, due(v))}</b> to ${usd ? html`our <b>USD</b> account` : "this account"}:</p>
+          ${v.qr ? html`
+            <p>Pay <b>${money(v, due(v))}</b> with the BML app. This QR code fills in our ${usd ? html`<b>USD</b> ` : ""}account and the amount for you, so nothing can be mistyped.</p>
+            <div class="paymv-pay">
+              <img class="paymv" src="${qrPngUrl(v.qr)}" alt="QR code to pay ${money(v, due(v))} to Alina Bun">
+              <button type="button" class="secondary" id="save-qr" data-track="save_qr">Save QR code</button>
+            </div>
+            <ol class="qr-steps">
+              <li>Tap <b>Save QR code</b> and save it to your photos. (Or press and hold the QR code and choose <b>Save to Photos</b>.)</li>
+              <li>Open the <b>BML app</b> and tap the scan button in the middle at the bottom.
+                <img src="/pay/bml-scan.jpg" alt="The BML app's bottom bar, with the scan button in the middle circled" width="460" height="90" loading="lazy"></li>
+              <li>Tap <b>Upload</b> at the bottom right, and pick the QR code from your photos.
+                <img src="/pay/bml-upload.jpg" alt="The BML app's scan screen, with Upload at the bottom right circled" width="460" height="110" loading="lazy"></li>
+              <li>Check the amount is <b>${due(v)}</b>, then send.</li>
+            </ol>
+            <p class="hint">Paying from another phone? Just scan the QR code on this screen with its BML app.</p>
+            <p style="margin-top:var(--space-4)"><b>Paying from MIB, or by hand?</b> Transfer ${money(v, due(v))} to ${usd ? html`our <b>USD</b> account` : "this account"}:</p>`
+          : html`<p>Transfer <b>${money(v, due(v))}</b> to ${usd ? html`our <b>USD</b> account` : "this account"}:</p>`}
           <div class="kv"><span>Amount</span><b>${due(v)}</b>${copyBtn(due(v), "Copy", "copy_amount")}</div>
           <div class="kv"><span>Bank</span><b>${b.bank}</b></div>
           <div class="kv"><span>Account name</span><b>${b.account_name}</b>${copyBtn(b.account_name, "Copy", "copy_name")}</div>
           <div class="kv"><span>Account number</span><b>${b.account_number}</b>${copyBtn(b.account_number, "Copy", "copy_account")}</div>
-          ${v.qr ? html`
-            <div class="paymv-pay">
-              <p style="margin:0"><b>Or scan this with the BML app.</b> The account and amount fill in by themselves.</p>
-              <div class="paymv">${raw(qrSvg(v.qr))}</div>
-              <a class="btn secondary-btn" href="${qrPngUrl(v.qr)}" download="alina-bun-${v.public_id}.png" data-track="save_qr">Save QR code</a>
-              <p class="hint">On this phone? Save it, then in the BML app choose to scan a QR code from your photos.</p>
-            </div>` : ""}
         </li>
         <li><p>Take a screenshot of the payment confirmation.</p></li>
         <li><p>${usd ? "Upload the screenshot here. Please pay in USD from a BML account: we check payments from other banks by hand, so they take longer."
@@ -236,6 +245,8 @@ function wire() {
     const el = $<HTMLInputElement>(sel);
     if (el) el.oninput = () => (slip.mib = { sentAt: null, fromName: null, fromAccount: null, ...slip.mib, [key]: el.value || null });
   }
+  const save = $<HTMLButtonElement>("#save-qr");
+  if (save) save.onclick = () => saveQr($<HTMLImageElement>(".paymv-pay img").src, `alina-bun-${view.public_id}.png`);
   const sw = $<HTMLButtonElement>("#bank-switch");
   if (sw) sw.onclick = () => { slip.bank = slip.bank === "mib" ? "bml" : "mib"; paint(); };
   const cancel = $<HTMLButtonElement>("#cancel"), change = $<HTMLButtonElement>("#change");
@@ -261,6 +272,22 @@ function wire() {
       }
     };
   }
+}
+
+/**
+ * Save the QR picture where the BML app's Upload can find it. iPhones: the share sheet's "Save Image" puts it in
+ * Photos (a download would go to Files). Elsewhere a download, which Android's photo picker shows.
+ */
+async function saveQr(png: string, name: string) {
+  const file = new File([await (await fetch(png)).blob()], name, { type: "image/png" });
+  if (/iPhone|iPad|iPod/.test(navigator.userAgent) && navigator.canShare?.({ files: [file] })) {
+    try {
+      return await navigator.share({ files: [file] });
+    } catch (e) {
+      if ((e as Error).name === "AbortError") return; // they closed the sheet
+    }
+  }
+  Object.assign(document.createElement("a"), { href: png, download: name }).click();
 }
 
 /** Cancel; for "change", the order form opens with the same buns, day and details filled in. */
