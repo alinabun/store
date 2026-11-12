@@ -733,7 +733,7 @@ async function days() {
   }));
 }
 
-// ── Shop invoices ──
+// ── Invoices: normal (a customer pays the prices on it) or shop (sale or return, the shop keeps its margin) ──
 
 const laari = (s: string) => Math.round(Number(s) * 100);
 const INV_CHIP: Record<string, string> = { unpaid: "awaiting_bank", paid: "paid", void: "cancelled" };
@@ -742,13 +742,13 @@ async function invoices() {
   const r = await call("/admin/invoices");
   shell("invoices", html`
     <div class="row between" style="margin-bottom:var(--space-4)">
-      <p class="muted" style="margin:0">Invoices for buns placed in shops. The shop pays for what it sold, minus its profit per bun.</p>
+      <p class="muted" style="margin:0">Invoices with a QR code to pay. Shop invoices: the shop pays for what it sold, minus its profit per bun.</p>
       <button id="new-inv">New invoice</button>
     </div>
     <div class="scroll"><table class="list">
-      <tr><th>Invoice</th><th>Date</th><th>Shop</th><th>Amount due</th><th>Status</th></tr>
+      <tr><th>Invoice</th><th>Date</th><th>To</th><th>Amount due</th><th>Status</th></tr>
       ${r.invoices.map((i: Record<string, string>) => html`
-        <tr data-inv="${i.number}"><td><b>${i.number}</b></td><td>${i.invoice_date}</td><td>${i.shop_name}</td>
+        <tr data-inv="${i.number}"><td><b>${i.number}</b></td><td>${i.invoice_date}</td><td>${i.shop_name}${i.kind === "shop" ? html` <span class="muted small">(shop)</span>` : ""}</td>
           <td>${mvr(i.due_mvr)}</td><td><span class="chip ${INV_CHIP[i.status]}">${i.status}</span></td></tr>`)}
     </table></div>
     ${r.invoices.length ? "" : html`<p class="muted">No invoices yet.</p>`}`);
@@ -764,21 +764,25 @@ async function newInvoice() {
   shell("invoices", html`
     <button class="secondary" id="back">← Invoices</button>
     <form class="card" id="inv" style="margin-top:var(--space-4)">
-      <h1>New shop invoice</h1>
+      <h1>New invoice</h1>
+      <div class="row" style="flex-wrap:wrap;gap:var(--space-4)">
+        <label style="display:flex;gap:var(--space-2);align-items:center;margin:0;white-space:nowrap"><input type="radio" name="kind" value="normal" checked style="width:auto"> Normal</label>
+        <label style="display:flex;gap:var(--space-2);align-items:center;margin:0;white-space:nowrap"><input type="radio" name="kind" value="shop" style="width:auto"> Shop (sale or return)</label>
+      </div>
       <div class="filters">
-        <label>Shop<input name="shop_name" list="shops" required maxlength="100" placeholder="Shop name"></label>
+        <label><span id="to-label">Bill to</span><input name="shop_name" list="shops" required maxlength="100" placeholder="Customer or company"></label>
         <label>Invoice date<input name="invoice_date" type="date" required value="${today}"></label>
-        <label>Shop's profit per bun sold (MVR)<input name="margin" inputmode="decimal" value="5"></label>
+        <label id="margin-field">Shop's profit per bun sold (MVR)<input name="margin" inputmode="decimal" value="5"></label>
       </div>
       <datalist id="shops">${(shops as string[]).map((s) => html`<option value="${s}">`)}</datalist>
       <div class="scroll"><table class="list" style="margin-top:var(--space-4)">
-        <tr><th>Bun</th><th>Price (MVR)</th><th>Sold</th><th>Free</th></tr>
+        <tr><th>Bun</th><th>Price (MVR)</th><th id="sold-head">Paid</th><th>Free</th></tr>
         ${list.map((p) => html`<tr data-p="${p.id}"><td>${p.name}</td>
           <td><input name="price" inputmode="decimal" value="${p.price_mvr}" style="max-width:90px"></td>
           <td><input name="sold" type="number" min="0" step="1" value="0" style="max-width:80px"></td>
           <td><input name="free" type="number" min="0" step="1" value="0" style="max-width:80px"></td></tr>`)}
       </table></div>
-      <p class="hint">Free = given away for tasting or testing; listed on the invoice at no charge.</p>
+      <p class="hint">Free = listed on the invoice at no charge.</p>
       <label>Notes <span class="muted">(optional, printed on the invoice)</span><textarea name="notes" maxlength="500"></textarea></label>
       <div class="notice info" id="sum" style="margin-top:var(--space-4)"></div>
       <div id="inv-err"></div>
@@ -792,14 +796,18 @@ async function newInvoice() {
     sold: Number(tr.querySelector<HTMLInputElement>("[name=sold]")!.value || 0),
     free: Number(tr.querySelector<HTMLInputElement>("[name=free]")!.value || 0),
   }));
+  const shop = () => f.kind.value === "shop";
   const sum = () => {
-    const m = laari(f.margin.value || "0");
+    $("#margin-field").style.display = shop() ? "" : "none";
+    $("#to-label").textContent = shop() ? "Shop" : "Bill to";
+    $("#sold-head").textContent = shop() ? "Sold" : "Paid";
+    const m = shop() ? laari(f.margin.value || "0") : 0;
     let sold = 0, free = 0, sales = 0, due = 0;
     for (const l of read()) {
       sold += l.sold; free += l.free;
       sales += laari(l.unit_price) * l.sold; due += (laari(l.unit_price) - m) * l.sold;
     }
-    render($("#sum"), html`${sold} sold, ${free} free · Sales ${mvr(sales / 100)} · Shop keeps ${mvr((sales - due) / 100)} · <b>Shop pays us ${mvr(due / 100)}</b>`);
+    render($("#sum"), !shop() ? html`${sold} paid, ${free} free · <b>Total ${mvr(sales / 100)}</b>` : html`${sold} sold, ${free} free · Sales ${mvr(sales / 100)} · Shop keeps ${mvr((sales - due) / 100)} · <b>Shop pays us ${mvr(due / 100)}</b>`);
   };
   f.addEventListener("input", sum);
   sum();
@@ -809,7 +817,7 @@ async function newInvoice() {
     btn.disabled = true;
     try {
       const r = await call("/admin/invoice", {
-        shop_name: f.shop_name.value, invoice_date: f.invoice_date.value, shop_margin_mvr: f.margin.value,
+        kind: f.kind.value, shop_name: f.shop_name.value, invoice_date: f.invoice_date.value, shop_margin_mvr: f.margin.value,
         notes: f.notes.value || null, lines: read().filter((l) => l.sold + l.free > 0),
       });
       go({ invoice: r.number });
@@ -839,7 +847,18 @@ async function invoiceView(number: string) {
         <div style="text-align:right"><h2 style="margin:0">Invoice ${v.number}</h2><div>${fmtDate(v.invoice_date)}</div></div>
       </div>
       <p style="margin-top:var(--space-5)"><span class="muted">To</span><br><b>${v.shop_name}</b></p>
-      <div class="scroll"><table class="list">
+      ${v.kind === "normal" ? html`<div class="scroll"><table class="list">
+        <tr><th>Bun</th><th>Qty</th><th>Price</th><th style="text-align:right">Amount</th></tr>
+        ${v.lines.filter((l: { sold: number }) => l.sold).map((l: { product_name: string; sold: number; unit_price: string }) => html`<tr>
+          <td>${l.product_name}</td><td>${l.sold}</td><td>${mvr(l.unit_price)}</td><td style="text-align:right">${mvr(laari(l.unit_price) * l.sold / 100)}</td></tr>`)}
+        ${v.lines.filter((l: { free: number }) => l.free).map((l: { product_name: string; free: number }) => html`<tr>
+          <td>${l.product_name} <span class="muted">(free)</span></td><td>${l.free}</td><td>–</td><td style="text-align:right">${mvr(0)}</td></tr>`)}
+      </table></div>
+      <table class="items" style="margin-top:var(--space-4);max-width:340px;margin-left:auto">
+        <tr><td>Buns</td><td>${v.totals.sold}</td></tr>
+        ${v.totals.free ? html`<tr><td>Free buns</td><td>${v.totals.free}</td></tr>` : ""}
+        <tr class="total"><td>Amount due</td><td>${mvr(v.totals.due)}</td></tr>
+      </table>` : html`<div class="scroll"><table class="list">
         <tr><th>Bun</th><th>Sold</th><th>Price</th><th>Shop keeps</th><th style="text-align:right">Amount</th></tr>
         ${v.lines.filter((l: { sold: number }) => l.sold).map((l: { product_name: string; sold: number; unit_price: string }) => html`<tr>
           <td>${l.product_name}</td><td>${l.sold}</td><td>${mvr(l.unit_price)}</td><td>${mvr(v.shop_margin_mvr)}</td>
@@ -853,7 +872,7 @@ async function invoiceView(number: string) {
         <tr><td>Sales</td><td>${mvr(v.totals.sales)}</td></tr>
         <tr><td>Shop's profit (${mvr(v.shop_margin_mvr)} per bun sold)</td><td>− ${mvr(v.totals.shop_share)}</td></tr>
         <tr class="total"><td>Amount due</td><td>${mvr(v.totals.due)}</td></tr>
-      </table>
+      </table>`}
       ${v.notes ? html`<p style="margin-top:var(--space-4)">${v.notes}</p>` : ""}
       <div class="row" style="margin-top:var(--space-5);align-items:center;flex-wrap:wrap">
         ${v.qr ? html`<div class="paymv">${raw(qrSvg(v.qr))}<div class="small">Scan with the BML app to pay ${mvr(v.totals.due)}</div></div>` : ""}
@@ -863,7 +882,13 @@ async function invoiceView(number: string) {
       </div>
     </div>`);
   $("#back").onclick = () => go({ tab: "invoices" });
-  $("#print").onclick = () => print();
+  $("#print").onclick = () => {
+    // The saved PDF is named after the page title.
+    const t = document.title;
+    document.title = `Alina Bun ${v.number} ${v.shop_name}`;
+    print();
+    document.title = t;
+  };
   const act = async (action: string, note: string | null) => {
     try {
       await call("/admin/invoice-action", { id: v.number, action, note });
