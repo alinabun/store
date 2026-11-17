@@ -113,7 +113,16 @@ async function route() {
     if (p.get("invoice")) return await invoiceView(p.get("invoice")!);
     switch (p.get("tab")) {
       case "pack": return await pack(p.get("date") || maleToday());
-      case "sales": return await sales(p.get("date") ?? "");
+      case "sales":
+        switch (p.get("view")) {
+          case "profit": return await profit();
+          case "costs": return await costs();
+          case "expenses": return await expenses(p.get("from") ?? "", p.get("to") ?? "");
+          case "stock": return await stock(p.get("date") ?? "");
+          case "demand": return await demand();
+          case "customers": return await customerStats();
+          default: return await sales(p.get("date") ?? "");
+        }
       case "visitors": return await visitors(p.get("from") ?? "", p.get("to") ?? "");
       case "production": return await production(p.get("date") ?? "");
       case "days": return await days();
@@ -1104,7 +1113,7 @@ function change(cur: number, prev: number, upIsGood = true) {
   if (!p) return html`<small class="muted">no change</small>`;
   return html`<small class="${(p > 0) === upIsGood ? "up" : "down"}">${p > 0 ? "▲" : "▼"} ${Math.abs(p)}%</small>`;
 }
-const tile = (label: string, value: string, sub: unknown = "", delta: unknown = "") =>
+const tile = (label: string, value: unknown, sub: unknown = "", delta: unknown = "") =>
   html`<div class="kpi"><span>${label}</span><b>${value}</b>${delta}${sub ? html`<small>${sub}</small>` : ""}</div>`;
 const LEGEND = html`<div class="legend small"><span><i class="v-sold"></i>Sold</span><span><i class="v-other"></i>Given away or not paid</span><span><i class="v-left"></i>Left over</span></div>`;
 const out = (b: BunStack) => b.sold + b.given + b.unpaid;
@@ -1143,7 +1152,7 @@ async function sales(date: string) {
   const usd = (x: Sales) => x.revenue_usd ? `+ USD ${x.revenue_usd.toFixed(2)}` : "";
   const sub = (...parts: string[]) => parts.filter(Boolean).join(" · ");
   const mix: [string, number][] = [["Website", m.web], ["Instagram and phone (entered by managers)", m.manager], ["Shops", m.shop]];
-  shell("sales", html`
+  salesShell("", html`
     <div class="filters">
       <label>Day<input type="date" id="d" value="${r.day}" max="${r.today}"></label>
       ${isToday ? "" : html`<button class="secondary" id="today" type="button">Today</button>`}
@@ -1260,6 +1269,345 @@ async function sales(date: string) {
     const last = new Date(Date.UTC(y, mo, 0)).toISOString().slice(0, 10);
     tr.onclick = () => open(last < r.today ? last : r.today);
   });
+}
+
+// ── Sales: inner tabs ──
+
+const SALES_VIEWS: [string, string][] = [["", "Overview"], ["profit", "Profit"], ["costs", "Costs"], ["expenses", "Expenses"], ["stock", "Stock"], ["demand", "Demand"], ["customers", "Customers"]];
+/** The Sales tab's inner tabs, on top of every Sales view. */
+function salesShell(view: string, body: Raw) {
+  shell("sales", html`<nav class="subtabs">${SALES_VIEWS.map(([k, l]) => html`<button class="${view === k ? "on" : ""}" data-view="${k}">${l}</button>`)}</nav>${body}`);
+  app.querySelectorAll<HTMLButtonElement>("[data-view]").forEach((b) => (b.onclick = () => go({ tab: "sales", view: b.dataset.view! })));
+}
+
+const CATEGORY_LABELS: Record<string, string> = {
+  ingredients: "Ingredients", packaging: "Packaging", equipment: "Equipment", transport: "Transport",
+  utilities: "Utilities", rent: "Rent", wages: "Wages", other: "Other",
+};
+const CATEGORIES = Object.keys(CATEGORY_LABELS);
+type Unit = "g" | "ml" | "pc";
+interface Cat { category: string; amount: number }
+
+/** 250 g, 1.8 kg, 500 ml, 8 L, 30 pieces. */
+function qty(n: number, unit: Unit): string {
+  const sign = n < 0 ? "-" : "";
+  const a = Math.abs(n);
+  const trim = (x: number) => x.toFixed(1).replace(/\.0$/, "");
+  if (unit === "pc") return `${sign}${trim(a)}`;
+  return a >= 1000 ? `${sign}${trim(a / 1000)} ${unit === "g" ? "kg" : "L"}` : `${sign}${trim(a)} ${unit}`;
+}
+/** A price per unit, written like `per` in the API: per kg or per L, or each. */
+const perUnit = (price: number, unit: Unit) => (unit === "pc" ? `${money(price)} each` : `${money(price * 1000)} / ${unit === "g" ? "kg" : "L"}`);
+
+/** One bar per category against the total. */
+function catBars(list: Cat[], total: number) {
+  if (!list.length) return html`<p class="muted">Nothing yet.</p>`;
+  return list.map((c: Cat) => barRow(CATEGORY_LABELS[c.category] ?? c.category, html`<b>${money(c.amount)}</b> · ${pct(c.amount, total)}%`, c.amount, total));
+}
+
+/** A row with data-id opens the hidden row right under it on click, Enter or Space. */
+function toggleRows() {
+  app.querySelectorAll<HTMLTableRowElement>("tr[data-id]").forEach((tr) => {
+    tr.tabIndex = 0;
+    const flip = () => {
+      const d = tr.nextElementSibling as HTMLElement | null;
+      if (d) d.hidden = !d.hidden;
+    };
+    tr.onclick = (e) => {
+      if (!(e.target as Element).closest("select, button, input")) flip();
+    };
+    tr.onkeydown = (e) => {
+      if (e.target !== tr || (e.key !== "Enter" && e.key !== " ")) return;
+      e.preventDefault();
+      flip();
+    };
+  });
+}
+
+// Profit
+
+interface Period {
+  from: string; to: string; label: string; sales: number; fees: number; usd: number; spent: number;
+  by_category: Cat[]; profit: number; made: number; sold: number; food_used: number; food_bought: number;
+}
+
+function periodTable(list: Period[], first: string) {
+  return html`<div class="scroll"><table class="list">
+    <tr><th>${first}</th><th>Sales</th><th>Delivery</th><th>Spent</th><th>Profit</th><th>Buns sold</th><th>Food used</th><th>Food bought</th></tr>
+    ${list.map((x: Period) => html`<tr><td>${x.label}</td><td>${money(x.sales)}</td><td>${money(x.fees)}</td><td>${money(x.spent)}</td>
+      <td><b class="${x.profit < 0 ? "neg" : ""}">${money(x.profit)}</b></td><td>${num(x.sold)}</td><td>${money(x.food_used)}</td><td>${money(x.food_bought)}</td></tr>`)}
+  </table></div>`;
+}
+
+async function profit() {
+  const r: { since: string | null; weeks: Period[]; months: Period[] } = await call("/admin/profit");
+  const w = r.weeks[0];
+  if (!r.since || !w) return salesShell("profit", html`<div class="notice info">No expenses logged yet. Post receipts and notes in the expenses chat on Telegram.</div>`);
+  const pw: Partial<Period> = r.weeks[1] ?? {};
+  const m0 = r.months[0];
+  const inMoney = w.sales + w.fees, inPrev = (pw.sales ?? 0) + (pw.fees ?? 0);
+  salesShell("profit", html`
+    <h2>This week · ${w.label}</h2>
+    <div class="kpis">
+      ${tile("Money in", money(inMoney), w.fees ? `incl. ${money(w.fees)} delivery fees` : "", change(inMoney, inPrev))}
+      ${tile("Spent", money(w.spent), w.by_category[0] ? CATEGORY_LABELS[w.by_category[0].category] ?? w.by_category[0].category : "", change(w.spent, pw.spent ?? 0, false))}
+      ${tile("Profit", html`<span class="${w.profit < 0 ? "neg" : ""}">${money(w.profit)}</span>`, "", change(w.profit, pw.profit ?? 0))}
+      ${tile("Buns sold", num(w.sold), `${w.made} made`, change(w.sold, pw.sold ?? 0))}
+      ${tile("Food per bun", money(w.made ? w.food_used / w.made : 0), "at today's prices", change(w.made ? w.food_used / w.made : 0, pw.made ? (pw.food_used ?? 0) / pw.made : 0, false))}
+    </div>
+    <div class="card"><h3>Week by week</h3>${periodTable(r.weeks, "Week")}</div>
+    <div class="card"><h3>Month by month</h3>${periodTable(r.months, "Month")}</div>
+    ${m0 ? html`<div class="card"><h3>Where the money went · ${m0.label}</h3>${catBars(m0.by_category, m0.spent)}</div>` : ""}
+    <p class="small muted">Sales are paid orders without delivery fees, plus paid shop invoices. Spent is everything posted
+      in the expenses chat, on the day it was posted. Food used is what the buns made should have used, from the recipes at
+      today's prices: food bought above it is stock on the shelf, or waste. USD payments are left out.</p>`);
+}
+
+// Costs
+
+type Ingredient = {
+  id: string; name: string; unit: Unit; price: number | null; per: string; source: "receipt" | "estimate" | null;
+  last: { date: string; shop: string | null; qty: number; amount: number } | null;
+  history: { date: string; shop: string | null; qty: number; amount: number; price: number }[];
+  used_in: string[];
+};
+type Product = {
+  product_id: string; name: string; price: number; cost: number; margin: number; margin_pct: number;
+  parts: { recipe_id: string; name: string; yield: number; cost: number }[]; missing: string[];
+};
+
+async function costs() {
+  const r: { products: Product[]; no_recipe: string[]; ingredients: Ingredient[] } = await call("/admin/costs");
+  salesShell("costs", html`
+    <div class="card">
+      <h3>Cost per bun</h3>
+      ${r.products.length ? html`<div class="scroll"><table class="list">
+        <tr><th>Bun</th><th>Price</th><th>Ingredients</th><th>You keep</th><th style="width:30%">Margin</th></tr>
+        ${r.products.map((p: Product, i: number) => html`<tr data-id="p${i}"><td>${p.name}</td><td>${money(p.price)}</td><td>${money(p.cost)}</td>
+          <td class="${p.margin < 0 ? "neg" : ""}">${money(p.margin)}</td>
+          <td><b>${p.margin_pct}%</b><div class="hbar"><i class="v-sold" style="width:${Math.max(0, Math.min(100, p.margin_pct))}%"></i></div></td></tr>
+          <tr hidden><td colspan="5">
+            ${p.parts.map((x: Product["parts"][number]) => html`<div class="small">${x.name} · 1/${x.yield} of a batch · ${money(x.cost)}</div>`)}
+            ${p.missing.length ? html`<div class="small"><span class="chip awaiting_bank">no price yet</span> ${p.missing.join(", ")}</div>` : ""}
+          </td></tr>`)}
+      </table></div>` : html`<p class="muted">No buns with recipes yet.</p>`}
+      ${r.no_recipe.length ? html`<p class="small muted">No recipe yet: ${r.no_recipe.join(", ")}</p>` : ""}
+    </div>
+    <div class="card">
+      <h3>Ingredient prices</h3>
+      <div class="scroll"><table class="list">
+        <tr><th>Ingredient</th><th>Price</th><th>From</th><th>Last bought</th><th>Used in</th></tr>
+        ${r.ingredients.map((g: Ingredient, i: number) => html`<tr data-id="i${i}"><td>${g.name}</td><td>${g.per}</td>
+          <td>${g.source === "receipt" ? html`<span class="chip paid">receipt</span>` : g.source === "estimate" ? html`<span class="chip awaiting_bank">estimate</span>` : "–"}</td>
+          <td>${g.last ? [dayName(g.last.date), g.last.shop, `${qty(g.last.qty, g.unit)} for ${money(g.last.amount)}`].filter(Boolean).join(" · ") : "–"}</td>
+          <td>${g.used_in.join(", ") || "–"}</td></tr>
+          <tr hidden><td colspan="5">${g.history.length ? g.history.map((h: Ingredient["history"][number]) => html`<div class="small">${[dayName(h.date), h.shop, qty(h.qty, g.unit), money(h.amount), perUnit(h.price, g.unit)].filter(Boolean).join(" · ")}</div>`) : html`<div class="small muted">No purchases yet.</div>`}</td></tr>`)}
+      </table></div>
+      <p class="small muted" style="margin-top:var(--space-3)">Prices come from the latest receipt with that ingredient: photos the Mac reads every night, and typed notes.
+        Estimates are web prices from November, used until a receipt comes in.</p>
+    </div>`);
+  toggleRows();
+}
+
+// Expenses
+
+interface Item { name: string; qty: number; amount: number; ingredient: string | null; category: string }
+interface Receipt {
+  id: number; date: string; amount: number | null; amount_from: "note" | "reply" | "photo" | null; shop: string | null;
+  photo: boolean; read: "read" | "not_read" | "waiting"; photo_total: number | null; check: boolean;
+  category: string; category_set: boolean; note: string | null; items: Item[];
+}
+const AMOUNT_FROM: Record<string, string> = { note: "typed", reply: "from a reply", photo: "read off the photo" };
+
+async function expenses(from: string, to: string) {
+  const qs = new URLSearchParams(Object.entries({ from, to }).filter(([, v]) => v));
+  const r: { from: string; to: string; total: number; unknown: number; categories: Cat[]; receipts: Receipt[] } = await call(`/admin/expenses?${qs}`);
+  const checks = r.receipts.filter((x: Receipt) => x.check).length;
+  const what = (x: Receipt) => x.shop ?? x.items[0]?.name ?? (x.note ? (x.note.length > 40 ? `${x.note.slice(0, 40)}…` : x.note) : "Photo");
+  const readCell = (x: Receipt) => x.read === "read" ? "read" : x.read === "not_read" ? html`<span class="chip review">couldn't read</span>` : html`<span class="small muted">tonight</span>`;
+  salesShell("expenses", html`
+    <div class="filters">
+      <label>From<input type="date" id="from" value="${r.from}" max="${maleToday()}"></label>
+      <label>To<input type="date" id="to" value="${r.to}" max="${maleToday()}"></label>
+      <button class="secondary" id="month" type="button">This month</button>
+    </div>
+    <div class="kpis">
+      ${tile("Spent", money(r.total), `${r.receipts.length} receipts`)}
+      ${r.unknown ? tile("No amount yet", num(r.unknown), "reply with the amount in the chat") : ""}
+      ${checks ? tile("To check", num(checks), "photo and amount differ") : ""}
+    </div>
+    <div class="card">
+      <h3>By category</h3>
+      ${catBars(r.categories, r.total)}
+    </div>
+    <div class="card">
+      <h3>Receipts</h3>
+      ${r.receipts.length ? html`<div class="scroll"><table class="list">
+        <tr><th>Day</th><th>What</th><th>Amount</th><th>Category</th><th>Read</th></tr>
+        ${r.receipts.map((x: Receipt) => html`<tr${x.items.length ? html` data-id="${x.id}"` : ""}><td>${dayName(x.date)}</td><td>${what(x)}</td>
+          <td>${x.amount === null ? html`<span class="chip review">no amount</span>` : money(x.amount)}
+            ${x.amount_from ? html`<div class="small muted">${AMOUNT_FROM[x.amount_from]}</div>` : ""}
+            ${x.check ? html`<div><span class="chip awaiting_bank">photo says ${money(x.photo_total ?? 0)}</span></div>` : ""}</td>
+          <td><select data-cat="${x.id}" aria-label="Category">${CATEGORIES.map((c: string) => html`<option value="${c}"${c === x.category ? " selected" : ""}>${CATEGORY_LABELS[c]}</option>`)}</select>
+            ${x.category_set ? "" : html`<div class="small muted">guessed</div>`}</td>
+          <td>${readCell(x)}</td></tr>
+          ${x.items.length ? html`<tr hidden><td colspan="5"><table class="items">
+            ${x.items.map((it: Item) => html`<tr><td>${it.name}${it.qty !== 1 ? ` × ${it.qty}` : ""}</td><td>${money(it.amount)}</td>
+              <td class="small muted">${it.ingredient ?? ""}</td><td class="small muted">${CATEGORY_LABELS[it.category] ?? it.category}</td></tr>`)}
+          </table></td></tr>` : ""}`)}
+      </table></div>` : html`<p class="muted">No receipts in these days.</p>`}
+    </div>
+    <p class="small muted">To change an amount, reply to the bot's message about that receipt in the expenses chat. A category you pick
+      here wins over the guess from its items.</p>`);
+
+  const fromEl = $<HTMLInputElement>("#from"), toEl = $<HTMLInputElement>("#to");
+  fromEl.onchange = toEl.onchange = () => go({ tab: "sales", view: "expenses", from: fromEl.value, to: toEl.value });
+  $("#month").onclick = () => go({ tab: "sales", view: "expenses" });
+  toggleRows();
+  app.querySelectorAll<HTMLSelectElement>("select[data-cat]").forEach((s) => {
+    s.onchange = async () => {
+      try {
+        await call("/admin/receipt-category", { id: Number(s.dataset.cat), category: s.value });
+        await expenses(r.from, r.to);
+      } catch (e) {
+        const n = document.createElement("div");
+        n.className = "notice bad";
+        n.textContent = (e as Error).message;
+        $("#view").prepend(n);
+      }
+    };
+  });
+}
+
+// Stock
+
+async function stock(date: string) {
+  const r: {
+    since: string | null; date: string; planned: number; average: number; to_buy: number;
+    ingredients: (Ingredient & { bought: number; used: number; left: number; per_day: number; days_left: number | null; need: number; buy: number; pack: number | null; packs: number; cost: number | null })[];
+  } = await call(`/admin/stock${date ? `?date=${date}` : ""}`);
+  const buys = r.ingredients.filter((g) => g.buy > 0);
+  salesShell("stock", html`
+    <div class="filters">
+      <label>Date<input type="date" id="date" value="${r.date}"></label>
+      <button class="secondary" id="tmr" type="button">Tomorrow</button>
+    </div>
+    ${r.since ? "" : html`<div class="notice info">No expenses logged yet, so there's no stock to count.</div>`}
+    <div class="kpis">
+      ${tile("Planned", r.planned ? num(r.planned) : "No plan", r.planned ? `for ${dayName(r.date)}` : `an average day is ${r.average} buns`)}
+      ${tile("To buy", money(r.to_buy))}
+      ${tile("Counting since", r.since ? dayName(r.since) : "–")}
+    </div>
+    <div class="card">
+      <h3>Shopping list for ${dayName(r.date)}</h3>
+      ${buys.length ? html`<div class="scroll"><table class="list">
+        <tr><th>Ingredient</th><th>Need</th><th>Have</th><th>Buy</th><th>Cost</th></tr>
+        ${buys.map((g) => html`<tr><td>${g.name}</td><td>${qty(g.need, g.unit)}</td><td>${qty(Math.max(g.left, 0), g.unit)}</td>
+          <td><b>${qty(g.buy, g.unit)}</b>${g.packs && g.pack ? html` <small class="muted">${g.packs} × ${qty(g.pack, g.unit)}</small>` : ""}</td>
+          <td>${g.cost === null ? "–" : money(g.cost)}</td></tr>`)}
+      </table></div>` : html`<p class="muted">Nothing to buy for this plan.</p>`}
+    </div>
+    <div class="card">
+      <h3>Stock</h3>
+      <div class="scroll"><table class="list">
+        <tr><th>Ingredient</th><th>Bought</th><th>Used</th><th>Left</th><th>Per baking day</th><th>Days left</th></tr>
+        ${r.ingredients.map((g) => html`<tr><td>${g.name}</td><td>${qty(g.bought, g.unit)}</td><td>${qty(g.used, g.unit)}</td>
+          <td>${g.left < 0 ? html`<span class="muted">–</span> <small class="muted">from older stock</small>` : qty(g.left, g.unit)}</td>
+          <td>${qty(g.per_day, g.unit)}</td>
+          <td>${g.days_left === null ? html`<span class="muted">–</span>` : g.days_left < 3 ? html`<span class="chip awaiting_bank">${g.days_left} days</span>` : `${g.days_left} days`}</td></tr>`)}
+      </table></div>
+    </div>
+    ${r.since ? html`<p class="small muted">Bought adds up receipt lines since ${dayName(r.since)}. Used is buns made (the baking plan) × the recipes. Stock from before that isn't known, so Left can be below zero.</p>` : ""}`);
+
+  $<HTMLInputElement>("#date").onchange = (e) => go({ tab: "sales", view: "stock", date: (e.target as HTMLInputElement).value });
+  $("#tmr").onclick = () => go({ tab: "sales", view: "stock" });
+}
+
+// Demand
+
+interface Weekday { weekday: number; name: string; days: number; avg: number; sold_out: number; buns: { product_id: string; avg: number }[] }
+interface Forecast { date: string; name: string; closed: boolean; total: number; buns: { product_id: string; name: string; qty: number }[] }
+
+async function demand() {
+  const r: {
+    weekdays: Weekday[]; mix: { product_id: string; name: string; sold: number; pct: number }[]; forecast: Forecast[];
+    sold_out_days: number; baking_days: number; lost: { orders: number; buns: number; expired: number }; preorder_pct: number;
+  } = await call("/admin/demand");
+  const best = r.weekdays.reduce((a: Weekday, b: Weekday) => (b.avg > a.avg ? b : a));
+  const wdMax = Math.max(1, ...r.weekdays.map((w: Weekday) => w.avg));
+  const mixMax = Math.max(1, ...r.mix.map((m) => m.sold));
+  const cols = Math.max(1, r.mix.length);
+  salesShell("demand", html`
+    <div class="kpis">
+      ${tile("Sold out", `${r.sold_out_days} of ${r.baking_days} days`, "everything made went out")}
+      ${tile("Pre-orders", `${r.preorder_pct}%`, "of buns, ordered before the cutoff")}
+      ${tile("Didn't go through", `${num(r.lost.orders)} ${r.lost.orders === 1 ? "order" : "orders"}`, `${r.lost.buns} buns · ${r.lost.expired} not paid in time`)}
+      ${tile("Best day", best.name, `${best.avg} buns on average`)}
+    </div>
+    <div class="card">
+      <h3>Next 7 days</h3>
+      <div class="scroll"><table class="list">
+        <tr><th>Day</th>${r.mix.map((m) => html`<th>${m.name}</th>`)}<th>Total</th></tr>
+        ${r.forecast.map((f: Forecast) => html`<tr><td>${dayName(f.date)}</td>
+          ${f.closed ? html`<td colspan="${cols}" class="muted">closed</td>` : r.mix.map((m) => html`<td>${f.buns.find((b) => b.product_id === m.product_id)?.qty || "–"}</td>`)}
+          <td>${f.closed ? "–" : f.total}</td></tr>`)}
+      </table></div>
+      <p class="small muted">The average sold on the same weekday over the last 4 weeks. When buns sell out, real demand is higher, so treat these as the least to bake.</p>
+    </div>
+    <div class="grid2">
+      <div class="card">
+        <h3>Weekdays</h3>
+        ${r.weekdays.map((w: Weekday) => html`<div class="hrow">
+          <span>${w.name}</span>
+          <div class="hbar">${w.avg ? html`<i class="v-sold" style="width:${(w.avg / wdMax) * 100}%"></i>` : ""}</div>
+          <span class="small"><b>${w.avg}</b> <span class="muted">${w.days} days · sold out ${w.sold_out}</span></span>
+        </div>`)}
+      </div>
+      <div class="card">
+        <h3>Flavours</h3>
+        ${r.mix.length ? r.mix.map((m) => barRow(m.name, html`${num(m.sold)} sold · ${m.pct}%`, m.sold, mixMax)) : html`<p class="muted">No buns sold yet.</p>`}
+      </div>
+    </div>`);
+}
+
+// Customers
+
+interface Week { from: string; label: string; new: number; returning: number }
+
+async function customerStats() {
+  const r: {
+    from: string; customers: number; returning: number; returning_pct: number; by_orders: { orders: string; customers: number }[];
+    weeks: Week[]; sizes: { buns: string; orders: number }[]; median_buns: number; avg_buns: number; pickup_pct: number;
+    fees: number; transport: number;
+  } = await call("/admin/customer-stats");
+  const wkMax = Math.max(1, ...r.weeks.map((w: Week) => w.new + w.returning));
+  const ordMax = Math.max(1, ...r.by_orders.map((b) => b.customers));
+  const sizeMax = Math.max(1, ...r.sizes.map((b) => b.orders));
+  salesShell("customers", html`
+    <div class="kpis">
+      ${tile("Customers", num(r.customers), `since ${dayName(r.from)}`)}
+      ${tile("Came back", num(r.returning), `${r.returning_pct}% ordered again`)}
+      ${tile("Typical order", `${r.median_buns} buns`, `average ${r.avg_buns}`)}
+      ${tile("Pickup", `${r.pickup_pct}%`, "of orders")}
+      ${tile("Delivery", money(r.fees), `in fees · ${money(r.transport)} spent on transport`)}
+    </div>
+    <div class="card">
+      <h3>New and returning, week by week</h3>
+      ${r.weeks.map((w: Week) => html`<div class="bunrow">
+        <div class="row between"><span>${w.label}</span><span class="small">${w.new} new · ${w.returning} came back</span></div>
+        <div class="hbar">${w.new ? html`<i class="v-sold" style="width:${(w.new / wkMax) * 100}%"></i>` : ""}${w.returning ? html`<i class="v-other" style="width:${(w.returning / wkMax) * 100}%"></i>` : ""}</div>
+      </div>`)}
+    </div>
+    <div class="grid2">
+      <div class="card">
+        <h3>Orders per customer</h3>
+        ${r.by_orders.map((b) => barRow(`${b.orders} ${b.orders === "1" ? "order" : "orders"}`, num(b.customers), b.customers, ordMax))}
+      </div>
+      <div class="card">
+        <h3>Buns per order</h3>
+        ${r.sizes.map((b) => barRow(`${b.buns} ${b.buns === "1" ? "bun" : "buns"}`, num(b.orders), b.orders, sizeMax))}
+      </div>
+    </div>`);
 }
 
 /** Columns for each day of the month: sold, given away or not paid, left over (together: what was made). */

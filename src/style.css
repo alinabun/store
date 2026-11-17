@@ -160,6 +160,10 @@ h2.sub { margin-top: var(--space-4); }
 .tabs { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-4); }
 .tabs button { background: var(--surface); color: var(--text); padding: 8px 14px; }
 .tabs button.on { background: var(--dark-roast); color: var(--text-inverse); }
+.subtabs { display: flex; gap: var(--space-2); flex-wrap: wrap; margin: -8px 0 var(--space-4); }
+.subtabs button { background: transparent; color: var(--text); border: 1px solid var(--border); padding: 4px 12px; font-size: .875rem; border-radius: var(--radius-pill); }
+.subtabs button.on { background: var(--surface); font-weight: 600; }
+.neg { color: var(--bad-text); }
 .filters { display: grid; gap: var(--space-2); grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-bottom: var(--space-4); align-items: end; }
 .filters label { margin: 0; font-weight: 500; font-size: .85rem; }
 table.list { width: 100%; border-collapse: collapse; background: var(--white); border-radius: var(--radius-md); overflow: hidden; }
