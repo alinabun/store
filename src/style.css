@@ -253,19 +253,57 @@ button.link { background: none; border: 0; padding: 0; margin-top: var(--space-1
 .sug button { display: block; width: 100%; text-align: left; background: none; color: var(--text); border: 0; border-radius: 0; padding: 8px 12px; font-weight: 500; }
 .sug button:hover, .sug button.on { background: var(--surface); }
 
-/* Pack tab: the order list, and the picked orders' buns beside it (below and pinned to the bottom on a phone). */
-.pack { display: grid; gap: var(--space-4); grid-template-columns: minmax(0, 1fr); }
-.pack aside { position: sticky; bottom: 0; max-height: 45vh; overflow-y: auto; margin: 0; box-shadow: var(--shadow-md, var(--shadow-sm)); }
-@media (min-width: 760px) {
-  .pack { grid-template-columns: minmax(0, 1fr) 320px; }
-  .pack aside { top: var(--space-4); bottom: auto; align-self: start; max-height: calc(100vh - 2 * var(--space-4)); }
+/* Pack tab: a kanban board. Lanes are the batches; columns are the stages; cards are orders.
+   Phones swipe the four columns side by side; wide screens fit them. */
+.pk-lane { margin-bottom: var(--space-5); }
+.pk-lane-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--space-2); margin-bottom: var(--space-3); }
+.pk-cols { display: grid; grid-auto-flow: column; grid-auto-columns: 78%; gap: var(--space-2); overflow-x: auto; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; padding-bottom: var(--space-1); }
+.pk-col { scroll-snap-align: start; min-width: 0; padding: var(--space-2); border-radius: var(--radius-md); background: rgba(217, 193, 160, .35); }
+.pk-col.over { outline: 2px dashed var(--golden-crust); outline-offset: -2px; }
+.pk-colhead { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); padding: 0 var(--space-1) var(--space-2); }
+.pk-count { font-size: .75rem; font-weight: 600; background: var(--white); border-radius: var(--radius-pill); padding: 2px 8px; }
+.pk-acts { margin-left: auto; display: flex; flex-wrap: wrap; }
+button.pk-link { background: none; color: var(--text); padding: 0 var(--space-2); min-height: 44px; font-size: .85rem; font-weight: 600; text-decoration: underline; }
+.pk-empty { margin: var(--space-2) var(--space-1); }
+.pk-card {
+  position: relative; background: var(--white); border: 2px solid transparent; border-radius: var(--radius-md); box-shadow: var(--shadow-sm);
+  padding: var(--space-3); margin-bottom: var(--space-2); cursor: pointer; user-select: none;
 }
-.pack-slot { margin-bottom: var(--space-4); }
-.pack-slot > label { margin: 0 0 var(--space-2); padding: var(--space-2) 0; border-bottom: 2px solid var(--border-strong); }
-.pack-order { display: flex; align-items: center; gap: var(--space-3); padding: 10px; background: var(--white); border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 6px; cursor: pointer; }
-.pack-order:hover { background: var(--bg); }
-.pack-order.on { border-color: var(--dark-roast); box-shadow: inset 4px 0 0 var(--dark-roast); }
-.pack-order input { width: 20px; height: 20px; flex: none; }
+.pk-card[draggable="true"] { cursor: grab; }
+.pk-card:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.pk-card.cancelled { border-color: var(--bad-text); }
+.pk-card.on { outline: 2px solid var(--dark-roast); outline-offset: 0; }
+.pk-card.on::after {
+  content: "✓"; position: absolute; top: -9px; left: -9px; width: 24px; height: 24px; border-radius: 50%;
+  background: var(--dark-roast); color: var(--milk-bun); font-size: .8rem; font-weight: 700; display: grid; place-items: center;
+}
+.pk-card .pk-link { margin: var(--space-1) 0 0 -8px; }
+.pk-top { display: flex; align-items: flex-start; gap: var(--space-2); margin-bottom: 2px; }
+.pk-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pay { flex: none; font-size: .72rem; font-weight: 600; padding: 2px 8px; border-radius: var(--radius-pill); white-space: nowrap; background: var(--surface); color: var(--text); }
+.pay.ok { background: var(--ok-bg); color: var(--ok-text); }
+.pay.free { background: var(--warm-glaze); color: var(--dark-roast); }
+.pay.warn { background: var(--warn-bg); color: var(--warn-text); }
+.pay.bad { background: var(--bad-bg); color: var(--bad-text); }
+.pk-panel {
+  position: sticky; bottom: 0; z-index: 5; margin-top: var(--space-5); padding: var(--space-4); max-height: 60vh; overflow-y: auto;
+  background: var(--white); border-radius: var(--radius-lg) var(--radius-lg) 0 0; box-shadow: var(--shadow-lg);
+}
+.pk-panel-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.pk-chips { display: flex; flex-wrap: wrap; gap: var(--space-1); margin: var(--space-2) 0; }
+.pk-chip { background: var(--surface); border-radius: var(--radius-pill); padding: 4px 12px; font-size: .9rem; }
+.pk-detail { margin: var(--space-2) 0; }
+.pk-detail > div { margin-bottom: 2px; overflow-wrap: anywhere; }
+.pk-moves { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); }
+.pk-moves button { min-height: 44px; }
+.pk-moves button.deliver { background: var(--ok-text); color: var(--white); }
+.pk-moves button.archive { background: var(--white); color: var(--text); border: 1px solid var(--border-strong); }
+.pk-arch-list { margin-top: var(--space-5); }
+.pk-arch-row { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) 0; border-bottom: 1px solid var(--border); }
+button.pk-put { min-height: 44px; padding: 8px 14px; flex: none; }
+@media (min-width: 900px) {
+  .pk-cols { grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-flow: row; grid-auto-columns: auto; overflow: visible; scroll-snap-type: none; }
+}
 
 /* The note for AI assistants at the end of the order page */
 .agent-note { margin: var(--space-6) 0 0; padding-top: var(--space-4); border-top: 1px solid var(--border); font-size: .8rem; color: var(--text-muted); }

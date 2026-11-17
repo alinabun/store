@@ -179,96 +179,238 @@ async function orders(p: URLSearchParams) {
   $("#next")?.addEventListener("click", () => go({ ...filters, page: String(page + 1) }));
 }
 
-// ── Pack: a day's orders by time and area; the buns of the picked orders on the side ──
+// ── Pack: the day's orders as a kanban board. One lane per batch; columns New, Packing, Ready, Delivered; cards are orders. ──
 
 type PackItem = { name: string; qty: number; free: boolean };
 type PackOrder = {
-  public_id: string; customer_name: string; phone: string; paid: boolean; fulfilment: string; time_label: string;
-  bake_label: string; area: string; boat: string | null; address: string | null; notes: string | null; items: PackItem[];
+  public_id: string; customer_name: string; phone: string; paid: boolean;
+  stage: "new" | "packing" | "ready" | "delivered";
+  payment: "paid" | "free" | "checking" | "unpaid" | null; // null for cancelled ones
+  cancelled: boolean; archived: boolean;
+  bake: string; bake_label: string;
+  fulfilment: "delivery" | "pickup"; time: string | null; time_label: string;
+  area: "Malé" | "Hulhumalé" | "Other" | "Boat" | "Pickup"; boat: string | null;
+  address: string | null; notes: string | null; items: PackItem[];
 };
+const LANES: [string, string, string][] = [["10:00", "☀️", "10 AM batch"], ["16:00", "🌇", "4 PM batch"]];
+const STAGES: [PackOrder["stage"], string][] = [["new", "New"], ["packing", "Packing"], ["ready", "Ready"], ["delivered", "Delivered"]];
+const PAY: Record<NonNullable<PackOrder["payment"]>, [string, string]> = {
+  paid: ["✓ Paid", "ok"], free: ["🎁 Free", "free"], checking: ["Checking", "warn"], unpaid: ["Unpaid", "bad"],
+};
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+const bunCount = (os: PackOrder[]) => os.reduce((n, o) => n + o.items.reduce((a, i) => a + i.qty, 0), 0);
+function bunTotals(os: PackOrder[]) {
+  const total = new Map<string, { qty: number; free: number }>(); // first seen keeps the shop's bun order
+  for (const i of os.flatMap((o) => o.items)) {
+    const t = total.get(i.name) ?? { qty: 0, free: 0 };
+    total.set(i.name, { qty: t.qty + i.qty, free: t.free + (i.free ? i.qty : 0) });
+  }
+  return total;
+}
+
+let reloadPack: (() => void) | null = null;
+// Two phones stay in step: the board reloads quietly when its tab is shown again.
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && document.getElementById("board")) reloadPack?.();
+});
 
 async function pack(date: string) {
-  const { orders } = await call<{ orders: PackOrder[] }>(`/admin/pack?date=${date}`);
   const day = (n: number) => new Date(Date.parse(maleToday()) + n * 86400_000).toISOString().slice(0, 10);
-  const picked = new Set<string>();
-  const slots = new Map<string, PackOrder[]>(); // the server sorts by time, so each time's orders come together
-  for (const o of orders) {
-    const k = `${o.bake_label} · ${o.fulfilment === "pickup" ? `Pickup ${o.time_label}` : o.boat ? `Boat ${o.time_label}` : o.time_label}`;
-    slots.set(k, [...slots.get(k) ?? [], o]);
-  }
-  const buns = (os: PackOrder[]) => os.reduce((n, o) => n + o.items.reduce((a, i) => a + i.qty, 0), 0);
-  const bunsText = (os: PackOrder[]) => `${buns(os)} bun${buns(os) === 1 ? "" : "s"}`;
   shell("pack", html`
     <div class="row" style="flex-wrap:wrap;margin-bottom:var(--space-4)">
       <input type="date" id="d" value="${date}" style="max-width:180px" aria-label="Delivery date">
       ${[[-1, "Yesterday"], [0, "Today"], [1, "Tomorrow"]].map(([n, l]) =>
         html`<button class="${day(n as number) === date ? "" : "secondary"}" data-day="${day(n as number)}">${l}</button>`)}
     </div>
-    ${orders.length ? html`
-    <div class="pack">
-      <div>
-        <p class="small muted" style="margin-top:0">Tap an order to see its buns. Tick several (or a whole time) to add them up.</p>
-        ${[...slots].map(([slot, os]) => html`
-          <div class="pack-slot">
-            <label class="row"><input type="checkbox" data-slot="${slot}" style="width:auto"> <b class="grow">${slot}</b>
-              <span class="small muted">${os.length} order${os.length === 1 ? "" : "s"} · ${bunsText(os)}</span></label>
-            ${os.map((o) => html`
-              <div class="pack-order" data-pid="${o.public_id}">
-                <input type="checkbox" data-pick="${o.public_id}" style="width:auto" aria-label="Pick ${o.public_id}">
-                <div class="grow"><b>${o.customer_name}</b> <span class="small muted">${o.public_id}</span>
-                  <div class="small">${o.area}${o.paid ? "" : html` · <span class="chip awaiting_bank">unpaid</span>`}</div></div>
-                <span class="small">${bunsText([o])}</span>
-              </div>`)}
-          </div>`)}
-      </div>
-      <aside class="card" id="side"></aside>
-    </div>` : html`<p class="muted">No orders for this day.</p>`}`);
+    <div id="board"></div>`);
   $<HTMLInputElement>("#d").onchange = (e) => go({ tab: "pack", date: (e.target as HTMLInputElement).value });
   app.querySelectorAll<HTMLButtonElement>("[data-day]").forEach((b) => (b.onclick = () => go({ tab: "pack", date: b.dataset.day! })));
-  if (!orders.length) return;
 
-  const side = () => {
-    const sel = orders.filter((o) => picked.has(o.public_id));
-    const os = sel.length ? sel : orders;
-    const total = new Map<string, { qty: number; free: number }>(); // first seen keeps the shop's bun order
-    for (const i of os.flatMap((o) => o.items)) {
-      const t = total.get(i.name) ?? { qty: 0, free: 0 };
-      total.set(i.name, { qty: t.qty + i.qty, free: t.free + (i.free ? i.qty : 0) });
+  const board = $("#board");
+  let orders: PackOrder[] | null = null; // null until the first load works
+  let problems: string[] = []; // failures of the last move or archive, one line each
+  const selected = new Set<string>();
+  const live = () => (orders ?? []).filter((o) => !o.archived);
+  const cardsIn = (bake: string, stage: string) => live().filter((o) => o.bake === bake && o.stage === stage);
+
+  async function load() {
+    try {
+      orders = (await call<{ orders: PackOrder[] }>(`/admin/pack?date=${date}`)).orders;
+      const on = new Set(live().map((o) => o.public_id));
+      for (const id of selected) if (!on.has(id)) selected.delete(id); // keep the selection for cards still here
+    } catch (e) {
+      problems = [(e as Error).message];
     }
-    const one = sel.length === 1 ? sel[0] : null;
-    render($("#side"), html`
-      <h3 style="margin-top:0">${one ? `${one.public_id} · ${one.customer_name}` : sel.length ? `${sel.length} orders` : `Whole day · ${orders.length} orders`}</h3>
-      ${one ? html`<p class="small" style="margin-top:0">${one.fulfilment === "pickup" ? "Pickup" : one.boat ? `Boat ${one.boat}` : one.area} · ${one.time_label} · ${one.bake_label}<br>
-        ${one.phone}${one.address ? html`<br>${one.address}` : ""}${one.notes ? html`<br><i>${one.notes}</i>` : ""}</p>` : ""}
-      <table class="items">
-        ${[...total].map(([name, t]) => html`<tr><td>${name}${t.free ? html` <span class="small muted">(${t.free} free)</span>` : ""}</td><td><b>${t.qty}</b></td></tr>`)}
-        <tr class="total"><td>Total</td><td>${buns(os)}</td></tr>
-      </table>
-      ${one ? html`<p class="small" style="margin-bottom:0"><a href="?order=${one.public_id}">Open order</a>${one.paid ? "" : " · not paid yet"}</p>` : ""}
-      ${sel.length ? html`<button class="secondary" id="clear" style="margin-top:var(--space-3)">Clear</button>` : ""}`);
-    $("#clear")?.addEventListener("click", () => { picked.clear(); sync(); });
+    draw();
+  }
+  async function doAct(path: string, body: unknown) {
+    problems = [];
+    try {
+      const r = await call<{ ok: boolean; failed: { error: string }[] }>(path, body);
+      problems = r.failed.map((f) => f.error);
+    } catch (e) {
+      problems = [(e as Error).message];
+    }
+    await load();
+  }
+  async function move(ids: string[], stage: string) {
+    const todo = ids.filter((id) => orders?.find((o) => o.public_id === id)?.stage !== stage);
+    if (!todo.length) return;
+    if (stage === "delivered" && !confirm(`Mark ${plural(todo.length, "order")} delivered? Customers who ordered in Telegram get a message. This can't be undone.`)) return;
+    await doAct("/admin/pack-move", { ids: todo, stage });
+  }
+  const archive = (ids: string[], archived = true) => doAct("/admin/pack-archive", { ids, archived });
+  function pick(id: string) {
+    if (selected.has(id)) selected.delete(id);
+    else selected.add(id);
+    draw();
+  }
+
+  function draw() {
+    const notice = problems.length ? html`<div class="notice bad">${problems.map((p) => html`<div>${p}</div>`)}</div>` : "";
+    if (!orders) {
+      render(board, html`${notice}`);
+      return;
+    }
+    const all = orders, lv = live();
+    const picked = lv.filter((o) => selected.has(o.public_id));
+    const dayCards = lv.filter((o) => !o.cancelled);
+    const one = picked.length === 1 ? picked[0] : null;
+
+    const card = (o: PackOrder) => {
+      const sel = selected.has(o.public_id), done = o.stage === "delivered";
+      const [label, tone] = o.cancelled ? ["Cancelled, unpack", "bad"] : PAY[o.payment ?? "unpaid"];
+      const where = o.fulfilment === "pickup" ? (done ? "Picked up" : `Pickup ${o.time_label}`)
+        : o.boat ? `Boat ${o.time_label} · ${o.boat}` : `${o.time_label} · ${o.area}`;
+      const items = o.items.filter((i) => i.qty > 0).map((i) => `${i.name} ${i.qty}${i.free ? " free" : ""}`).join(", ");
+      return html`<div class="pk-card${sel ? " on" : ""}${o.cancelled ? " cancelled" : ""}" role="button" tabindex="0"
+          aria-pressed="${sel ? "true" : "false"}" draggable="${done || o.cancelled ? "false" : "true"}" data-id="${o.public_id}">
+        <div class="pk-top"><b class="pk-name">${o.customer_name}</b><span class="pay ${tone}">${label}</span></div>
+        <div class="small">${where}</div>
+        <div class="small muted">${plural(bunCount([o]), "bun")}${items ? ` · ${items}` : ""}</div>
+        <div class="small muted">${o.public_id}</div>
+        ${o.cancelled ? html`<button class="pk-link" data-unpack="${o.public_id}">Unpacked ✓</button>` : ""}
+      </div>`;
+    };
+    const column = (bake: string, stage: string, label: string, cards: PackOrder[]) => html`
+      <div class="pk-col" data-bake="${bake}" data-stage="${stage}">
+        <div class="pk-colhead"><b>${label}</b> <span class="pk-count">${cards.length}</span>
+          <span class="pk-acts">
+            <button class="pk-link" data-selall="${bake}|${stage}">Select all</button>
+            ${stage === "delivered" && cards.length ? html`<button class="pk-link" data-archall="${bake}">Archive all</button>` : ""}
+          </span></div>
+        ${cards.length ? cards.map(card) : html`<p class="small muted pk-empty">Nothing here</p>`}
+      </div>`;
+
+    render(board, html`
+      ${notice}
+      ${all.length ? html`
+      ${LANES.map(([bake, icon, name]) => {
+        const os = lv.filter((o) => o.bake === bake);
+        return html`<section class="pk-lane">
+          <h2 class="pk-lane-head">${icon} ${name} <span class="small muted">· ${plural(os.length, "order")} · ${plural(bunCount(os), "bun")}</span></h2>
+          ${os.length ? html`<div class="pk-cols">${STAGES.map(([stage, label]) => column(bake, stage, label, os.filter((o) => o.stage === stage)))}</div>`
+            : html`<p class="muted">No orders</p>`}
+        </section>`;
+      })}
+      <details class="pk-arch-list"><summary>Archived (${all.length - lv.length})</summary>
+        ${all.filter((o) => o.archived).map((o) => html`<div class="pk-arch-row">
+          <span class="grow small"><b>${o.public_id}</b> ${o.customer_name} · ${o.bake_label} · ${o.cancelled ? "Cancelled" : "Delivered"}</span>
+          <button class="secondary pk-put" data-put-back="${o.public_id}">Put back</button></div>`)}
+      </details>
+      <section class="pk-panel" aria-label="Selection">
+        <div class="pk-panel-top">
+          <b>${picked.length ? `${plural(picked.length, "order")} selected · ${plural(bunCount(picked), "bun")}`
+            : `Whole day · ${plural(dayCards.length, "order")} · ${plural(bunCount(dayCards), "bun")}`}</b>
+          ${picked.length ? html`<button class="pk-link" data-clear>Clear</button>` : ""}
+        </div>
+        <div class="pk-chips">${[...bunTotals(picked.length ? picked : dayCards)].map(([name, t]) =>
+          html`<span class="pk-chip">${name} <b>${t.qty}</b>${t.free ? html` <span class="muted">(${t.free} free)</span>` : ""}</span>`)}</div>
+        ${one ? html`<div class="small pk-detail">
+          <div><a href="tel:${one.phone.replace(/\s+/g, "")}">${one.phone}</a>${one.boat ? ` · Boat ${one.boat}` : ""}</div>
+          ${one.address ? html`<div>${one.address}</div>` : ""}
+          ${one.notes ? html`<div><i>${one.notes}</i></div>` : ""}
+          <div><a href="?order=${one.public_id}">Open order</a></div>
+        </div>` : ""}
+        ${picked.length ? html`<div class="pk-moves">
+          ${STAGES.map(([stage, label]) => html`<button class="${stage === "delivered" ? "deliver" : "secondary"}" data-move="${stage}">${label}</button>`)}
+          <button class="archive" data-archive-sel>Archive</button>
+        </div>` : ""}
+      </section>` : html`<p class="muted">No orders for this day.</p>`}`);
+  }
+
+  const press = (b: HTMLElement) => {
+    const d = b.dataset;
+    if (d.unpack) return archive([d.unpack]);
+    if (d.putBack) return archive([d.putBack], false);
+    if (d.selall !== undefined) {
+      const [bake, stage] = d.selall.split("|");
+      for (const o of cardsIn(bake, stage)) selected.add(o.public_id);
+      return draw();
+    }
+    if (d.archall) {
+      const ids = cardsIn(d.archall, "delivered").map((o) => o.public_id);
+      if (ids.length && confirm(`Archive ${plural(ids.length, "delivered order")}? You can put them back from the list below.`)) return archive(ids);
+      return;
+    }
+    if (d.clear !== undefined) {
+      selected.clear();
+      return draw();
+    }
+    if (d.move) return move([...selected], d.move);
+    if (d.archiveSel !== undefined) return archive([...selected]);
   };
-  const sync = () => {
-    app.querySelectorAll<HTMLInputElement>("[data-pick]").forEach((c) => (c.checked = picked.has(c.dataset.pick!)));
-    app.querySelectorAll<HTMLElement>("[data-pid]").forEach((r) => r.classList.toggle("on", picked.has(r.dataset.pid!)));
-    app.querySelectorAll<HTMLInputElement>("[data-slot]").forEach((c) => {
-      const ids = slots.get(c.dataset.slot!)!.map((o) => o.public_id);
-      c.checked = ids.every((id) => picked.has(id));
-      c.indeterminate = !c.checked && ids.some((id) => picked.has(id));
-    });
-    side();
+  board.onclick = (e) => {
+    const t = e.target as HTMLElement;
+    const b = t.closest<HTMLElement>("button");
+    if (b) press(b);
+    else {
+      const c = t.closest<HTMLElement>(".pk-card");
+      if (c) pick(c.dataset.id!);
+    }
   };
-  app.querySelectorAll<HTMLElement>("[data-pid]").forEach((r) => (r.onclick = (e) => {
-    const id = r.dataset.pid!;
-    if ((e.target as HTMLElement).matches("[data-pick]")) picked.has(id) ? picked.delete(id) : picked.add(id); // the tick box adds to the pick
-    else { picked.clear(); picked.add(id); } // tapping the order shows just that one
-    sync();
-  }));
-  app.querySelectorAll<HTMLInputElement>("[data-slot]").forEach((c) => (c.onchange = () => {
-    for (const o of slots.get(c.dataset.slot!)!) c.checked ? picked.add(o.public_id) : picked.delete(o.public_id);
-    sync();
-  }));
-  sync();
+  board.onkeydown = (e) => {
+    const c = e.target as HTMLElement;
+    if (!c.classList.contains("pk-card") || (e.key !== "Enter" && e.key !== " ")) return;
+    e.preventDefault();
+    pick(c.dataset.id!);
+    board.querySelector<HTMLElement>(`.pk-card[data-id="${c.dataset.id}"]`)?.focus(); // redrawn, so focus the card again
+  };
+  // Drag and drop (computers). Phones use the buttons.
+  // A card stays in its batch: it can only be dropped in its own row's columns.
+  let dragBake = "";
+  const colOf = (e: DragEvent) => {
+    const col = (e.target as HTMLElement).closest<HTMLElement>(".pk-col");
+    return col?.dataset.bake === dragBake ? col : null;
+  };
+  board.ondragstart = (e) => {
+    const c = (e.target as HTMLElement).closest<HTMLElement>(".pk-card");
+    if (!c?.draggable) return;
+    dragBake = orders?.find((o) => o.public_id === c.dataset.id)?.bake ?? "";
+    e.dataTransfer!.setData("text/plain", c.dataset.id!);
+    e.dataTransfer!.effectAllowed = "move";
+  };
+  board.ondragover = (e) => {
+    const col = colOf(e);
+    board.querySelectorAll(".pk-col").forEach((c) => c.classList.toggle("over", c === col));
+    if (!col) return;
+    e.preventDefault();
+  };
+  board.ondragleave = (e) => {
+    const col = colOf(e);
+    if (col && !col.contains(e.relatedTarget as Node)) col.classList.remove("over");
+  };
+  board.ondrop = (e) => {
+    board.querySelectorAll(".pk-col.over").forEach((c) => c.classList.remove("over"));
+    const col = colOf(e);
+    if (!col) return;
+    e.preventDefault();
+    const id = e.dataTransfer!.getData("text/plain");
+    void move(selected.has(id) ? [...selected] : [id], col.dataset.stage!); // a selected card moves the whole selection
+  };
+
+  reloadPack = () => void load();
+  await load();
 }
 
 /** An order taken by a manager (DM, phone, in person) or a giveaway. It holds buns like a customer order but never expires. */
