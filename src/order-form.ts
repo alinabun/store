@@ -352,25 +352,27 @@ function applyChange() {
   render($("#mine"), html`<div class="notice info">Your last order was cancelled and filled in here. Change what you need, then place it again.</div>`);
 }
 
-/** Orders from this phone that are still open, so a closed browser tab doesn't lose them. */
+/** Orders from this phone, so a closed browser tab doesn't lose them: the ones still to come on top, past ones behind a button. */
 async function showSavedOrders() {
-  const LABEL: Record<string, string> = { awaiting_payment: "Waiting for your payment", awaiting_bank: "Checking your payment", paid: "Paid" };
-  const open: { t: string; id: string; label: string; day: string }[] = [];
+  const LABEL: Record<string, string> = { awaiting_payment: "Waiting for your payment", awaiting_bank: "Checking your payment", paid: "Paid", delivered: "Delivered" };
+  const mine: { t: string; id: string; label: string; day: string; date: string; past: boolean }[] = [];
   for (const o of savedOrders()) {
     try {
-      const v = await api<{ status: string; delivery_label: string }>(`/order-status?t=${encodeURIComponent(o.t)}`);
-      if (LABEL[v.status]) open.push({ ...o, label: LABEL[v.status], day: v.delivery_label });
-      else forgetOrder(o.t); // delivered, cancelled or rejected: nothing to come back to
+      const v = await api<{ status: string; delivery_date: string; delivery_label: string }>(`/order-status?t=${encodeURIComponent(o.t)}`);
+      // Paid orders are rarely marked delivered, so a day that has passed counts as done too.
+      if (LABEL[v.status]) mine.push({ ...o, label: LABEL[v.status], day: v.delivery_label, date: v.delivery_date, past: v.status === "delivered" || v.delivery_date < today });
+      else forgetOrder(o.t); // cancelled or rejected: nothing to come back to
     } catch (e) {
       if ((e as Error).message.includes("couldn't find")) forgetOrder(o.t); // other errors (offline): keep it
     }
   }
-  if (!open.length || $("#mine").childElementCount) return;
-  render($("#mine"), html`<div class="card">
-    <h2>Your order${open.length > 1 ? "s" : ""}</h2>
-    ${open.map((o) => html`<p class="row between" style="margin:var(--space-2) 0"><span><b>${o.id}</b> · ${o.day}<br><span class="small muted">${o.label}</span></span>
-      <a class="btn secondary-btn" href="/order/?t=${encodeURIComponent(o.t)}">View</a></p>`)}
-  </div>`);
+  if (!mine.length || $("#mine").childElementCount) return;
+  const open = mine.filter((o) => !o.past), past = mine.filter((o) => o.past).sort((a, b) => b.date.localeCompare(a.date));
+  const rows = (list: typeof mine) => list.map((o) => html`<p class="row between" style="margin:var(--space-2) 0"><span><b>${o.id}</b> · ${o.day}<br><span class="small muted">${o.label}</span></span>
+    <a class="btn secondary-btn" href="/order/?t=${encodeURIComponent(o.t)}">View</a></p>`);
+  render($("#mine"), html`
+    ${open.length ? html`<div class="card"><h2>Your order${open.length > 1 ? "s" : ""}</h2>${rows(open)}</div>` : ""}
+    ${past.length ? html`<details class="past-orders"><summary>Your past orders (${past.length})</summary><div class="card">${rows(past)}</div></details>` : ""}`);
 }
 
 const day = () => dates.find((d) => d.date === document.querySelector<HTMLInputElement>("input[name=delivery_date]:checked")?.value);

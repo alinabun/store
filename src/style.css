@@ -235,6 +235,8 @@ table.list tr.on { background: var(--bg); }
   .wide-only { display: none; }
 }
 details summary { cursor: pointer; color: var(--text-muted); margin-top: var(--space-2); }
+.past-orders { margin-bottom: var(--space-4); }
+.past-orders > .card { margin: var(--space-2) 0 0; }
 
 /* Printing an invoice: only the invoice itself. */
 @media print {
