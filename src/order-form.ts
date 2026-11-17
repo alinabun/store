@@ -1,26 +1,34 @@
-// "/" — pick buns, a day, and details; the server re-prices everything.
+// "/" — pick buns, a day, a batch and details; the server re-prices everything.
 import { $, api, forgetOrder, html, mvr, raw, rememberOrder, render, savedOrders, store } from "./lib.ts";
 import { type Pin, pinPicker } from "./map.ts";
 import { flush, track } from "./track.ts";
 
-interface Product { id: string; name: string; description: string | null; price_mvr: string; image_url: string | null }
+interface Product { id: string; name: string; description: string | null; price_mvr: string; image_url: string | null; thumb_url?: string | null }
+interface TimeOption { value: string; label: string }
+/** One of a day's two batches (10 AM, 4 PM). Its stock and times are the ones that count. */
+interface Bake {
+  bake: string; label: string; ready: string; ready_now: boolean; ready_label: string;
+  available: boolean; left: number;
+  products: Record<string, number>; // buns of each kind still left in this batch
+  delivery_times: TimeOption[]; pickup_times: TimeOption[];
+}
 interface DeliveryDate {
   date: string; label: string; kind: "preorder" | "extras"; available: boolean; closed: boolean; left: number;
   products: Record<string, number>; // buns of each kind still available that day
   delivery_open: boolean;
-  delivery_times: TimeOption[]; pickup_times: TimeOption[]; // what can still be chosen that day
+  bakes: Bake[];
 }
-interface TimeOption { value: string; label: string }
+interface Vessel { id: number; name: string; operator: string | null; vessel_type: string | null; location: string | null }
 
 const MAX_PER_LINE = 50, MAX_BUNS = 100;
 const app = $("#app");
 const qty = new Map<string, number>();
 let products: Product[] = [];
 let dates: DeliveryDate[] = [];
+let today = ""; // Malé date, from the server
 let pin: Pin | null = null;
 let pickupPlace = "", pickupPhone = "", pickupMap: string | null = null;
 let fee = 0; // laari; delivery fee for the current pin
-interface Vessel { id: number; name: string; operator: string | null; vessel_type: string | null; location: string | null }
 let boat: Vessel | null = null;
 let cutoff = "6 pm"; // from the server's cutoff hour
 let minDelivery = 0; // buns; delivery needs at least this many (from the server)
@@ -32,12 +40,12 @@ async function load() {
   try {
     let r;
     [{ products }, r] = await Promise.all([api("/catalog"), api("/delivery-dates")]);
-    ({ dates, pickup_place: pickupPlace, pickup_phone: pickupPhone, pickup_map_url: pickupMap } = r);
+    ({ dates, today_date: today, pickup_place: pickupPlace, pickup_phone: pickupPhone, pickup_map_url: pickupMap } = r);
     minDelivery = Number(r.delivery_min_buns ?? 0);
     usdRate = r.usd_rate ? Math.round(Number(r.usd_rate) * 100) : 0;
     const hr = Number(r.cutoff_hour);
     cutoff = `${hr % 12 || 12} ${hr < 12 ? "am" : "pm"}`;
-    $("#intro").textContent = `Pre-order by ${cutoff} the day before. After that, you can still order our extra buns while they last.`;
+    $("#intro").textContent = `We bake twice a day: the 10 AM batch and the 4 PM batch. Pre-order by ${cutoff} the day before; after that, order our extra buns while they last.`;
     // What this visitor saw on sale: the Visitors tab counts who came when buns were gone.
     track("menu", {
       today: r.today, open: dates.some((d) => d.available),
@@ -61,25 +69,33 @@ async function load() {
               <span>${d.label}${!d.available ? html`<small>${d.closed ? "Closed" : "Sold out"}</small>` : d.kind === "extras" ? html`<small>Extras</small>` : ""}</span></label>`)}
         </div>
         <p class="hint" id="day-hint"></p>
+
+        <h2 class="sub">Which batch?</h2>
+        <div class="bakes" role="radiogroup" aria-label="Batch" id="bakes"></div>
+        <div class="notice info bake-hint" id="bake-hint" hidden></div>
       </div>
 
-      <div class="products">
-      ${products.map((p, i) => html`
-        <div class="product">
-          ${p.image_url ? html`<img src="${p.image_url}" alt="${p.name} bun" ${i < 2 ? "" : raw('loading="lazy"')} width="450" height="800">` : html`<div class="ph"></div>`}
-          <div class="product-row">
-          <div class="product-body">
-            <h3>${p.name}</h3>
-            ${p.description ? html`<p class="small muted">${p.description}</p>` : ""}
-            <div class="muted small">${mvr(p.price_mvr)} <span class="left" id="left-${p.id}"></span></div>
-          </div>
-          <div class="qty">
-            <button type="button" class="round" data-step="-1" data-id="${p.id}" aria-label="One less ${p.name}">−</button>
-            <output id="q-${p.id}" aria-live="polite">0</output>
-            <button type="button" class="round" data-step="1" data-id="${p.id}" aria-label="One more ${p.name}">+</button>
-          </div>
-          </div>
-        </div>`)}
+      <div class="card menu-card">
+        <h2>Choose your buns</h2>
+        <p class="hint">Prices per bun.${minDelivery ? ` Delivery from ${minDelivery} ${minDelivery === 1 ? "bun" : "buns"}.` : ""}</p>
+        <div class="menu">
+        ${products.map((p, i) => html`
+          <div class="bun" id="row-${p.id}">
+            <div class="bun-photo">${p.thumb_url || p.image_url
+              ? html`<img src="${p.thumb_url || p.image_url}" alt="${p.name} bun" width="72" height="72" decoding="async" ${i < 2 ? "" : raw('loading="lazy"')}>`
+              : html`<span class="bun-ph" aria-hidden="true">🥯</span>`}</div>
+            <div class="bun-body">
+              <h3>${p.name}</h3>
+              ${p.description ? html`<p class="bun-desc">${p.description}</p>` : ""}
+              <div class="bun-meta"><b>MVR ${Number(p.price_mvr) % 1 ? Number(p.price_mvr).toFixed(2) : Number(p.price_mvr)}</b><span class="stock" id="left-${p.id}" hidden></span></div>
+            </div>
+            <div class="stepper">
+              <button type="button" data-step="-1" data-id="${p.id}" aria-label="One less ${p.name}">−</button>
+              <output id="q-${p.id}" aria-live="polite">0</output>
+              <button type="button" data-step="1" data-id="${p.id}" aria-label="One more ${p.name}">+</button>
+            </div>
+          </div>`)}
+        </div>
       </div>
 
       <div class="card">
@@ -163,13 +179,12 @@ async function load() {
     const id = b.dataset.id!;
     const total = [...qty.values()].reduce((a, n) => a + n, 0);
     const step = Number(b.dataset.step);
-    const left = day()?.products[id] ?? 0, max = Math.min(MAX_PER_LINE, left), have = qty.get(id) ?? 0;
+    const bk = batch(), left = bk?.products[id] ?? 0, max = Math.min(MAX_PER_LINE, left), have = qty.get(id) ?? 0;
     const next = Math.max(0, Math.min(max, have + step));
-    if (step > 0 && have >= left && left < MAX_PER_LINE) once(`want:${id}:${day()?.date}`, "blocked", { why: left ? "too_many" : "sold_out", bun: id, date: day()?.date, left });
-    if (step > 0 && next > have) once(`add:${id}`, "add", { bun: id, date: day()?.date });
+    if (step > 0 && have >= left && left < MAX_PER_LINE) once(`want:${id}:${day()?.date}:${bk?.bake}`, "blocked", { why: left ? "too_many" : "sold_out", bun: id, date: day()?.date, bake: bk?.bake, left });
+    if (step > 0 && next > have) once(`add:${id}`, "add", { bun: id, date: day()?.date, bake: bk?.bake });
     if (step > 0 && total >= MAX_BUNS) return showError(`The most you can order at once is ${MAX_BUNS} buns.`);
-    qty.set(id, next);
-    $(`#q-${id}`).textContent = String(next);
+    setCount(id, next);
     update();
   });
   leaflet = pinPicker($("#map"), saved[0]?.pin ?? null, (p) => {
@@ -178,21 +193,23 @@ async function load() {
     showError("");
     quoteFee();
   }).catch(() => render($("#map"), html`<div class="notice bad">The map didn't load. Please check your internet and refresh the page.</div>`));
-  // A tap on a day or option that can't be chosen: what they wanted and couldn't have.
+  // A tap on a day, batch or option that can't be chosen: what they wanted and couldn't have.
   $("#f").addEventListener("click", (e) => {
     const off = (e.target as Element).closest("label")?.querySelector<HTMLInputElement>("input:disabled");
     if (off?.name === "delivery_date") {
       once(`day:${off.value}`, "blocked", { why: dates.find((d) => d.date === off.value)?.closed ? "day_closed" : "day_sold_out", date: off.value });
     }
+    if (off?.name === "bake") once(`bake:${off.value}:${day()?.date}`, "blocked", { why: "batch_unavailable", date: day()?.date, bake: off.value });
     if (off?.name === "fulfilment") once(`f:${off.value}:${day()?.date}`, "blocked", { why: off.value === "delivery" ? "delivery_full" : "pickup_closed", date: day()?.date });
   });
   $("#name").closest(".card")!.addEventListener("focusin", () => track("start"), { once: true });
   $("#f").addEventListener("change", (e) => {
-    if ((e.target as HTMLInputElement).name === "delivery_date") track("day", { date: day()?.date });
-    if ((e.target as HTMLInputElement).name === "delivery_date") refreshDay();
-    if ((e.target as HTMLInputElement).name === "fulfilment") refreshFulfilment();
-    if ((e.target as HTMLInputElement).name === "deliver_to") refreshDeliverTo();
-    if ((e.target as HTMLInputElement).name === "currency") update();
+    const name = (e.target as HTMLInputElement).name;
+    if (name === "delivery_date") { refreshDay(); track("day", { date: day()?.date, bake: batch()?.bake }); }
+    if (name === "bake") { refreshBake(); track("day", { date: day()?.date, bake: batch()?.bake }); }
+    if (name === "fulfilment") refreshFulfilment();
+    if (name === "deliver_to") refreshDeliverTo();
+    if (name === "currency") update();
   });
   refreshDay();
   showSavedDetails();
@@ -251,7 +268,7 @@ function showSavedDetails(selected = 0) {
   };
 }
 
-/** Fill in who and where (never the buns, day or times); null empties them. */
+/** Fill in who and where (never the buns, day, batch or times); null empties them. */
 function applyDetails(d: Details | null) {
   $<HTMLInputElement>("#name").value = d?.name ?? "";
   $<HTMLInputElement>("#phone").value = d?.phone ?? "";
@@ -275,14 +292,15 @@ function applyDetails(d: Details | null) {
 }
 
 function clearForm() {
-  for (const p of products) {
-    qty.set(p.id, 0);
-    $(`#q-${p.id}`).textContent = "0";
-  }
+  for (const p of products) setCount(p.id, 0);
   $<HTMLTextAreaElement>("#notes").value = "";
   if (document.querySelector("#saved")) showSavedDetails(-1);
   applyDetails(null);
-  $<HTMLSelectElement>("#delivery-time").value = day()?.delivery_times[0]?.value === "asap" ? "asap" : "";
+  // The batch goes back to the first one on sale; its times follow.
+  const first = day()?.bakes.find((b) => b.available);
+  if (first) $<HTMLInputElement>(`input[name=bake][value="${first.bake}"]`).checked = true;
+  refreshBake();
+  $<HTMLSelectElement>("#delivery-time").value = batch()?.delivery_times[0]?.value === "asap" ? "asap" : "";
   $<HTMLSelectElement>("#pickup-time").value = "";
   update();
 }
@@ -300,21 +318,32 @@ function setBoat(v: Vessel | null) {
   if (v) $("#boat-change").onclick = () => { setBoat(null); $("#boat-q").focus(); };
 }
 
-/** After "Change order": the cancelled order's day, buns, delivery choice and notes, as far as they're still available. */
+/** Sets a bun's count and its row's look (highlighted when it's above 0). */
+function setCount(id: string, n: number) {
+  qty.set(id, n);
+  $(`#q-${id}`).textContent = String(n);
+  $(`#row-${id}`).classList.toggle("on", n > 0);
+}
+
+/** After "Change order": the cancelled order's day, batch, buns, delivery choice and notes, as far as they're still available. */
 function applyChange() {
-  const c = store<{ date: string; items: { product_id: string; qty: number }[]; fulfilment: string; notes: string | null; currency?: string }>("alinabun.change");
+  const c = store<{ date: string; bake?: string; items: { product_id: string; qty: number }[]; fulfilment: string; notes: string | null; currency?: string }>("alinabun.change");
   if (!c) return;
   store("alinabun.change", null);
   const dateRadio = document.querySelector<HTMLInputElement>(`input[name=delivery_date][value="${c.date}"]`);
   if (dateRadio && !dateRadio.disabled) dateRadio.checked = true;
   const fRadio = document.querySelector<HTMLInputElement>(`input[name=fulfilment][value="${c.fulfilment}"]`);
   if (fRadio && !fRadio.disabled) fRadio.checked = true;
-  refreshDay();
+  refreshDay(); // the day's batches first; then the saved batch, if it's still on sale
+  const bRadio = c.bake ? document.querySelector<HTMLInputElement>(`input[name=bake][value="${c.bake}"]`) : null;
+  if (bRadio && !bRadio.disabled) {
+    bRadio.checked = true;
+    refreshBake();
+  }
   for (const i of c.items) {
-    const n = Math.min(i.qty, MAX_PER_LINE, day()?.products[i.product_id] ?? 0);
+    const n = Math.min(i.qty, MAX_PER_LINE, batch()?.products[i.product_id] ?? 0);
     if (!products.some((p) => p.id === i.product_id) || !n) continue;
-    qty.set(i.product_id, n);
-    $(`#q-${i.product_id}`).textContent = String(n);
+    setCount(i.product_id, n);
   }
   if (c.notes) $<HTMLTextAreaElement>("#notes").value = c.notes;
   const cur = document.querySelector<HTMLInputElement>(`input[name=currency][value="${c.currency}"]`);
@@ -345,32 +374,57 @@ async function showSavedOrders() {
 }
 
 const day = () => dates.find((d) => d.date === document.querySelector<HTMLInputElement>("input[name=delivery_date]:checked")?.value);
+/** The chosen batch: its stock and times are the ones that count. */
+const batch = () => day()?.bakes.find((b) => b.bake === document.querySelector<HTMLInputElement>("input[name=bake]:checked")?.value);
 
-/** Show what's left for the chosen day, and trim quantities that no longer fit. */
+/** The stock line on a batch tab. */
+const stockLine = (d: DeliveryDate | undefined, b: Bake) =>
+  !b.left ? "Sold out" : d?.kind === "extras" ? `${b.left} left` : b.left <= 10 ? `Only ${b.left} left` : "Pre-order";
+
+/** A new day: its batch tabs (keeping the chosen batch if it's still on sale), then that batch's limits and times. */
 function refreshDay() {
   const d = day();
   $("#day-hint").textContent = !d ? "Sorry, nothing is available right now. Please check back later."
     : d.kind === "extras" ? `${d.label}: these are our extra buns, while they last.`
     : `Pre-order for ${d.label}. Orders close at ${cutoff} the day before.`;
+  const was = document.querySelector<HTMLInputElement>("input[name=bake]:checked")?.value;
+  const bakes = d?.bakes ?? [];
+  const pick = bakes.find((b) => b.bake === was && b.available) ?? bakes.find((b) => b.available);
+  render($("#bakes"), html`${bakes.map((b) => html`<label><input type="radio" name="bake" value="${b.bake}" ${b.available ? "" : "disabled"} ${b === pick ? "checked" : ""}>
+    <span><b>${b.label}</b><small>${b.ready_label}</small><small>${stockLine(d, b)}</small></span></label>`)}`);
+  refreshBake();
+}
+
+/** The chosen batch: when its buns come, what's left, and its times. */
+function refreshBake() {
+  const d = day(), b = batch();
+  const hint = $("#bake-hint");
+  render(hint, !d || !b ? html`` : b.ready_now ? html`Fresh from the ${b.label}, ready now.`
+    : d.date === today ? html`This batch comes out of the oven at <b>${b.ready}</b>. Delivery and pickup start from <b>${b.ready}</b>.`
+    : html`${d.label}, ${b.label}: delivery and pickup from <b>${b.ready}</b>.`);
+  hint.hidden = !d || !b;
   for (const p of products) {
-    const n = Math.min(MAX_PER_LINE, d?.products[p.id] ?? 0);
-    if ((qty.get(p.id) ?? 0) > n) {
-      qty.set(p.id, n);
-      $(`#q-${p.id}`).textContent = String(n);
-    }
-    $(`#left-${p.id}`).textContent = n === 0 ? "· Sold out" : d?.kind === "extras" || n <= 10 ? `· ${n} left` : "";
+    const n = Math.min(MAX_PER_LINE, b?.products[p.id] ?? 0);
+    if ((qty.get(p.id) ?? 0) > n) setCount(p.id, n);
+    $(`#row-${p.id}`).classList.toggle("soldout", n === 0);
+    const pill = $(`#left-${p.id}`);
+    const text = n === 0 ? "Sold out" : d?.kind === "extras" || n <= 10 ? `${n} left` : ""; // 5 or fewer: in the warning colour
+    pill.textContent = text;
+    pill.className = `stock${n === 0 ? " bad" : n <= 5 ? " warn" : ""}`;
+    pill.hidden = !text;
   }
-  // Deliveries are capped per day; when full, only pickup is offered.
+  // Deliveries are capped per day; when full, only pickup is offered. Pickup follows the batch's times.
   const radio = document.querySelector<HTMLInputElement>("input[name=fulfilment][value=delivery]")!;
   const pickupRadio = document.querySelector<HTMLInputElement>("input[name=fulfilment][value=pickup]")!;
   radio.disabled = !!d && !d.delivery_open;
-  pickupRadio.disabled = !!d && !d.pickup_times.length; // today, after the last pickup time
+  pickupRadio.disabled = !!d && !b?.pickup_times.length; // after this batch's last pickup time
   $("#delivery-full").textContent = radio.disabled ? "Full that day" : "";
   $("#pickup-closed").textContent = pickupRadio.disabled ? "Closed for today" : "";
   if (radio.disabled) pickupRadio.checked = true;
   else if (pickupRadio.disabled) radio.checked = true;
-  fillTimes($<HTMLSelectElement>("#delivery-time"), d?.delivery_times ?? [], "asap");
-  fillTimes($<HTMLSelectElement>("#pickup-time"), d?.pickup_times ?? []);
+  fillTimes($<HTMLSelectElement>("#delivery-time"), b?.delivery_times ?? [], "asap");
+  fillTimes($<HTMLSelectElement>("#pickup-time"), b?.pickup_times ?? []);
+  $<HTMLInputElement>("#boat-time").min = b?.bake ?? ""; // a boat can't come before the batch is ready
   refreshFulfilment();
   update();
 }
@@ -456,7 +510,8 @@ function update() {
   const withFee = fulfilment() === "delivery" && buns ? fee : 0;
   // Same rounding as the server (rules.ts usdTotal); the server's total is the one that counts.
   const usd = currency() === "USD" ? ` = USD ${(Math.ceil(((laari + withFee) * 2) / usdRate) / 2).toFixed(2)}` : "";
-  $("#sum").textContent = buns ? `${buns} bun${buns > 1 ? "s" : ""} · ${mvr((laari + withFee) / 100)}${withFee ? " incl. delivery" : ""}${usd}` : "No buns yet";
+  const bk = batch();
+  $("#sum").textContent = buns ? `${buns} bun${buns > 1 ? "s" : ""} · ${mvr((laari + withFee) / 100)}${withFee ? " incl. delivery" : ""}${usd}${bk ? ` · ${bk.label}` : ""}` : "No buns yet";
   const hint = document.querySelector<HTMLElement>("#usd-hint");
   if (hint) hint.hidden = currency() !== "USD";
   if (fulfilment() === "delivery" && buns < minDelivery) $("#sum").textContent += ` · delivery is for ${minDelivery}+ buns`;
@@ -477,12 +532,14 @@ async function submit(e: SubmitEvent) {
   const items = [...qty].filter(([, n]) => n > 0).map(([product_id, qty]) => ({ product_id, qty }));
   const get = (k: string) => String(f.get(k) ?? "").trim();
   const date = dates.find((d) => d.date === get("delivery_date"));
+  const bk = batch();
   if (!items.length) return showError("Please choose at least one bun.");
   if (!date) return showError("Please pick a delivery day.");
+  if (!bk) return showError("Please pick a batch.");
   const buns = items.reduce((a, i) => a + i.qty, 0);
-  if (buns > date.left) return showError(`Only ${date.left} buns are left for ${date.label}. Please order fewer or pick another day.`);
-  const over = items.find((i) => i.qty > (date.products[i.product_id] ?? 0));
-  if (over) return showError(`Only ${date.products[over.product_id] ?? 0} ${products.find((p) => p.id === over.product_id)?.name} left for ${date.label}.`);
+  if (buns > bk.left) return showError(`Only ${bk.left} buns are left in the ${bk.label} for ${date.label}. Please order fewer or pick another batch or day.`);
+  const over = items.find((i) => i.qty > (bk.products[i.product_id] ?? 0));
+  if (over) return showError(`Only ${bk.products[over.product_id] ?? 0} ${products.find((p) => p.id === over.product_id)?.name} left in the ${bk.label} for ${date.label}.`);
   if (fulfilment() === "delivery" && buns < minDelivery) {
     return showError(`Delivery is for orders of ${minDelivery} buns or more. Please add more buns, or choose pickup.`);
   }
@@ -491,6 +548,7 @@ async function submit(e: SubmitEvent) {
   const toBoat = fulfilment() === "delivery" && deliverTo() === "boat";
   if (toBoat && !boat) return showError("Please search for your boat and pick it from the list.");
   if (toBoat && !$<HTMLInputElement>("#boat-time").value) return showError("Please say what time the boat will be there.");
+  if (toBoat && $<HTMLInputElement>("#boat-time").value < bk.bake) return showError(`The ${bk.label} is ready at ${bk.ready}. Please pick a later time for the boat.`);
   const time = fulfilment() === "pickup" ? $<HTMLSelectElement>("#pickup-time").value : toBoat ? "" : $<HTMLSelectElement>("#delivery-time").value;
   if (!toBoat && !time) return showError(fulfilment() === "pickup" ? "Please choose what time you'll come." : "Please choose a delivery time.");
   if (fulfilment() === "delivery" && !pin) {
@@ -499,7 +557,7 @@ async function submit(e: SubmitEvent) {
   }
 
   track("submit", {
-    date: date.date, kind: date.kind, buns, items: Object.fromEntries(items.map((i) => [i.product_id, i.qty])), f: fulfilment(), boat: toBoat,
+    date: date.date, kind: date.kind, bake: bk.bake, buns, items: Object.fromEntries(items.map((i) => [i.product_id, i.qty])), f: fulfilment(), boat: toBoat,
     time, cur: currency(), saved: !!document.querySelector<HTMLSelectElement>("#saved")?.value,
   });
   const btn = $<HTMLButtonElement>("#submit");
@@ -508,7 +566,7 @@ async function submit(e: SubmitEvent) {
   try {
     const r = await api<{ status_token: string; public_id: string }>("/create-order", {
       body: { name: get("name"), phone: get("phone"), fulfilment: fulfilment(), ...(fulfilment() === "delivery" && pin ? { lat: pin.lat, lng: pin.lng, address: get("address") || null } : {}),
-        ...(toBoat ? { vessel_id: boat!.id, boat_time: $<HTMLInputElement>("#boat-time").value } : { time }), notes: get("notes") || null, delivery_date: date.date, items, currency: currency() },
+        ...(toBoat ? { vessel_id: boat!.id, boat_time: $<HTMLInputElement>("#boat-time").value } : { time }), notes: get("notes") || null, delivery_date: date.date, bake: bk.bake, items, currency: currency() },
     });
     rememberDetails({ name: get("name"), phone: get("phone"), fulfilment: fulfilment(), deliverTo: deliverTo(), address: fulfilment() === "delivery" ? get("address") : "", pin: fulfilment() === "delivery" ? pin : null, boat: toBoat ? boat : null });
     rememberOrder(r.status_token, r.public_id);

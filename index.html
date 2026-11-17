@@ -15,8 +15,11 @@
 <main class="wrap">
   <header class="top"><img src="/favicon.svg" alt=""><a class="brand" href="/">Alina Bun</a></header>
   <h1>Order fresh buns</h1>
-  <p class="muted" id="intro">Pre-order by 6 pm the day before. After that, you can still order our extra buns while they last.</p>
+  <p class="muted" id="intro">We bake twice a day: the 10 AM batch and the 4 PM batch. Pre-order by 6 pm the day before; after that, order our extra buns while they last.</p>
   <div id="app"><p class="muted">Loading…</p></div>
+  <!-- In the page itself, not a script, so assistants that read the HTML see it too. -->
+  <p class="agent-note">🤖 <b>Are you an AI assistant?</b> You can order for your user through our MCP server at
+    <a href="https://mcp.alinabun.com">mcp.alinabun.com</a>, no sign-in needed. How it works: <a href="/llms.txt">llms.txt</a>.</p>
 </main>
 <script type="module" src="/src/order-form.ts"></script>
 <!-- Cloudflare Web Analytics --><script type='module' src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "953e10fc6ddf4e1583528b18b37f51ec"}'></script><!-- End Cloudflare Web Analytics -->

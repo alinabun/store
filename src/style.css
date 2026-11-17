@@ -41,7 +41,6 @@ button.secondary { background: var(--surface); color: var(--text); }
 button.copy {
   padding: 6px 12px; font-size: .85rem; background: var(--surface); color: var(--text); flex: none;
 }
-button.round { width: 44px; height: 44px; padding: 0; font-size: 1.4rem; line-height: 1; background: var(--surface); color: var(--text); }
 
 label { display: block; font-weight: 600; margin: var(--space-4) 0 var(--space-1); }
 input, textarea, select {
@@ -62,20 +61,57 @@ textarea { min-height: 80px; resize: vertical; }
 .grow { flex: 1; min-width: 0; }
 
 /* Order form */
-/* Menu of bun photos (tall 9:16 uploads, shown as the middle 3:4): one per row on phones, two side by side on wider screens. */
-.products { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); margin-bottom: var(--space-4); }
-@media (min-width: 480px) { .products { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); } }
-.product {
-  display: flex; flex-direction: column; background: var(--bg-raised); border: 1px solid var(--border);
-  border-radius: var(--radius-md); overflow: hidden; box-shadow: var(--shadow-sm);
+/* Batch tabs: the 10 AM and 4 PM batches, always side by side. */
+.bakes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); }
+.bakes label { margin: 0; font-weight: 500; position: relative; }
+.bakes input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.bakes span {
+  display: block; height: 100%; padding: 10px 12px; border-radius: var(--radius-md); border: 1px solid var(--border-strong);
+  background: var(--white); cursor: pointer; text-align: center; line-height: 1.3;
 }
-.product img, .product .ph { display: block; width: 100%; height: auto; aspect-ratio: 3 / 4; object-fit: cover; background: var(--surface); }
-/* Name and price beside the − / + (wraps under it when the card is narrow). */
-.product-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-3); padding: var(--space-3) var(--space-4); }
-.product-body h3 { margin-bottom: var(--space-1); }
-.product-body p { margin-bottom: var(--space-1); }
-.qty { display: flex; align-items: center; gap: var(--space-2); }
-.qty output { min-width: 2ch; text-align: center; font-weight: 600; font-size: 1.1rem; }
+.bakes span b { display: block; font-weight: 600; }
+.bakes span small { display: block; font-size: .75rem; color: var(--text-muted); }
+.bakes input:checked + span { background: var(--dark-roast); color: var(--text-inverse); border-color: var(--dark-roast); }
+.bakes input:checked + span small { color: var(--warm-glaze); }
+.bakes input:focus-visible + span { outline: 3px solid var(--accent); outline-offset: 2px; }
+.bakes input:disabled + span { opacity: .45; cursor: default; }
+h2.sub { margin-top: var(--space-4); }
+.bake-hint { margin: var(--space-3) 0 0; }
+
+/* Bun list: one card, a hairline between rows, a small photo and a − / + pill on each. */
+.menu-card { padding: var(--space-3) var(--space-3) var(--space-2); }
+.bun {
+  position: relative; display: grid; grid-template-columns: 72px minmax(0, 1fr) auto; align-items: center; gap: var(--space-3);
+  min-height: 88px; padding: var(--space-2); border-top: 1px solid var(--border); transition: background .15s;
+}
+.bun:first-child { border-top: 0; }
+.bun.on { background: rgba(189, 129, 69, .08); }
+.bun.on::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--golden-crust); border-radius: 0 3px 3px 0; }
+.bun-photo { position: relative; width: 72px; height: 72px; border-radius: var(--radius-md); overflow: hidden; background: var(--surface); }
+.bun-photo img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.bun-photo::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--border); pointer-events: none; }
+.bun-ph { display: grid; place-items: center; height: 100%; font-size: 1.6rem; }
+.bun-body { min-width: 0; }
+.bun-body h3 { margin: 0 0 2px; font-size: 1.05rem; }
+.bun-desc { margin: 0 0 4px; font-size: .85rem; line-height: 1.35; color: var(--text-muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.bun-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; font-size: .9rem; }
+.bun-meta b { font-weight: 600; }
+.stock { font-size: .75rem; font-weight: 600; padding: 2px 8px; border-radius: var(--radius-pill); background: var(--surface); color: var(--text); white-space: nowrap; }
+.stock.warn { background: var(--warn-bg); color: var(--warn-text); }
+.stock.bad { background: var(--bad-bg); color: var(--bad-text); }
+.stock[hidden] { display: none; }
+.bun.soldout .bun-photo { filter: grayscale(.7); opacity: .6; }
+.bun.soldout .stepper { display: none; }
+.stepper { display: flex; align-items: center; border: 1px solid var(--border-strong); border-radius: var(--radius-pill); padding: 2px; background: var(--white); }
+.stepper button { position: relative; width: 36px; height: 36px; padding: 0; border-radius: 50%; font-size: 1.25rem; line-height: 1; background: var(--surface); color: var(--text); }
+/* A 44 px touch target around each 36 px button. */
+.stepper button::after { content: ""; position: absolute; inset: -4px; }
+.stepper output { min-width: 2ch; padding: 0 4px; text-align: center; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text-muted); }
+.bun.on .stepper output { color: var(--text); font-weight: 700; }
+@media (max-width: 379px) {
+  .bun { grid-template-columns: 64px minmax(0, 1fr) auto; gap: var(--space-2); }
+  .bun-photo { width: 64px; height: 64px; }
+}
 .dates { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .dates label { margin: 0; font-weight: 500; }
 .dates input { position: absolute; opacity: 0; width: 1px; height: 1px; }
@@ -230,3 +266,7 @@ button.link { background: none; border: 0; padding: 0; margin-top: var(--space-1
 .pack-order:hover { background: var(--bg); }
 .pack-order.on { border-color: var(--dark-roast); box-shadow: inset 4px 0 0 var(--dark-roast); }
 .pack-order input { width: 20px; height: 20px; flex: none; }
+
+/* The note for AI assistants at the end of the order page */
+.agent-note { margin: var(--space-6) 0 0; padding-top: var(--space-4); border-top: 1px solid var(--border); font-size: .8rem; color: var(--text-muted); }
+.agent-note a { color: inherit; }

@@ -1,0 +1,25 @@
+# Alina Bun
+
+> A home bakery in Malé, Maldives: soft buns made by hand, baked twice a day (the 10 AM batch and the 4 PM batch), delivered in Malé, Hulhulé and Hulhumalé, or picked up. Prices are in MVR. Customers pay by bank transfer.
+
+AI assistants can order for their user through our MCP server. No sign-in or API key is needed.
+
+## Ordering through MCP
+
+- Server: https://mcp.alinabun.com (Streamable HTTP, JSON responses, no authentication)
+- `get_menu`: the buns on sale with prices and photos, the days that can be ordered, and for each day its two batches (`10:00` and `16:00`) with how many of each bun are left and that batch's delivery and pickup times. Call it first.
+- `place_order`: the customer's name and Maldives mobile number, the day, the batch, the buns, delivery (a map pin as latitude and longitude, plus optional directions) or pickup, and a time from that batch's list. Returns the order and a payment link.
+- `get_order`: an order's status, from its payment link.
+
+Good to know:
+
+- A batch's buns are only ready from its time. Ordering at 8 AM from the 10 AM batch means delivery or pickup after 10 AM.
+- Each batch has its own buns: if a bun is sold out in one batch, try the other batch or another day.
+- Payment never goes through the assistant. Give the customer the payment link: they pay with the BML app (a QR code) or a bank transfer, then upload the payment screenshot there. Unpaid orders are cancelled after a short time.
+- Ask the customer before placing an order, and use only their own details.
+
+## For people
+
+- [Order online](https://store.alinabun.com/): the order form.
+- [Order in Telegram](https://t.me/alinabunorderbot): step by step in a chat.
+- [Alina Bun](https://alinabun.com/): who we are.

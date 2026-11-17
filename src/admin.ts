@@ -157,7 +157,7 @@ async function orders(p: URLSearchParams) {
         <tr data-id="${o.public_id}">
           <td><b>${o.public_id}</b><div class="small muted">${when(o.created_at)}</div></td>
           <td>${o.customer_name}<div class="small muted">${o.phone}</div></td>
-          <td>${o.delivery_date}</td>
+          <td>${o.delivery_date}${o.bake_label ? html`<div class="small muted">${o.bake_label}</div>` : ""}</td>
           <td>${mvr(o.total_mvr)}<div class="small muted">${o.currency === "USD" ? `pays USD ${o.total_usd} · ` : ""}${o.total_buns} buns</div></td>
           <td>${chip(o.status)} ${o.fulfilment === "pickup" ? html`<span class="chip">pickup</span>` : ""} ${o.entered_by ? html`<span class="chip">by us</span>` : ""} ${o.needs_review ? html`<span class="chip review">review</span>` : ""} ${String(o.on_telegram) === "false" ? html`<span class="chip review">not on Telegram</span>` : ""}</td>
         </tr>`)}
@@ -184,7 +184,7 @@ async function orders(p: URLSearchParams) {
 type PackItem = { name: string; qty: number; free: boolean };
 type PackOrder = {
   public_id: string; customer_name: string; phone: string; paid: boolean; fulfilment: string; time_label: string;
-  area: string; boat: string | null; address: string | null; notes: string | null; items: PackItem[];
+  bake_label: string; area: string; boat: string | null; address: string | null; notes: string | null; items: PackItem[];
 };
 
 async function pack(date: string) {
@@ -193,7 +193,7 @@ async function pack(date: string) {
   const picked = new Set<string>();
   const slots = new Map<string, PackOrder[]>(); // the server sorts by time, so each time's orders come together
   for (const o of orders) {
-    const k = o.fulfilment === "pickup" ? `Pickup ${o.time_label}` : o.boat ? `Boat ${o.time_label}` : o.time_label;
+    const k = `${o.bake_label} · ${o.fulfilment === "pickup" ? `Pickup ${o.time_label}` : o.boat ? `Boat ${o.time_label}` : o.time_label}`;
     slots.set(k, [...slots.get(k) ?? [], o]);
   }
   const buns = (os: PackOrder[]) => os.reduce((n, o) => n + o.items.reduce((a, i) => a + i.qty, 0), 0);
@@ -238,7 +238,7 @@ async function pack(date: string) {
     const one = sel.length === 1 ? sel[0] : null;
     render($("#side"), html`
       <h3 style="margin-top:0">${one ? `${one.public_id} · ${one.customer_name}` : sel.length ? `${sel.length} orders` : `Whole day · ${orders.length} orders`}</h3>
-      ${one ? html`<p class="small" style="margin-top:0">${one.fulfilment === "pickup" ? "Pickup" : one.boat ? `Boat ${one.boat}` : one.area} · ${one.time_label}<br>
+      ${one ? html`<p class="small" style="margin-top:0">${one.fulfilment === "pickup" ? "Pickup" : one.boat ? `Boat ${one.boat}` : one.area} · ${one.time_label} · ${one.bake_label}<br>
         ${one.phone}${one.address ? html`<br>${one.address}` : ""}${one.notes ? html`<br><i>${one.notes}</i>` : ""}</p>` : ""}
       <table class="items">
         ${[...total].map(([name, t]) => html`<tr><td>${name}${t.free ? html` <span class="small muted">(${t.free} free)</span>` : ""}</td><td><b>${t.qty}</b></td></tr>`)}
@@ -274,7 +274,8 @@ async function pack(date: string) {
 /** An order taken by a manager (DM, phone, in person) or a giveaway. It holds buns like a customer order but never expires. */
 async function newOrder() {
   type Time = { value: string; label: string };
-  type Day = { date: string; label: string; kind: string; available: boolean; closed: boolean; products: Record<string, number>; delivery_times: Time[]; pickup_times: Time[] };
+  type Bake = { bake: string; label: string; available: boolean; products: Record<string, number>; delivery_times: Time[]; pickup_times: Time[] };
+  type Day = { date: string; label: string; kind: string; available: boolean; closed: boolean; bakes: Bake[] };
   const [{ products }, dd] = await Promise.all([api("/catalog"), api("/delivery-dates")]);
   const days = (dd.dates as Day[]).filter((d) => d.available);
   shell("orders", html`
@@ -285,6 +286,7 @@ async function newOrder() {
         <label class="suggest">Customer's name<input name="name" required maxlength="80" autocomplete="off"></label>
         <label class="suggest">Phone<input name="phone" type="tel" required placeholder="7xx xxxx" autocomplete="off"></label>
         <label>Day<select name="delivery_date">${days.map((d) => html`<option value="${d.date}">${d.label}${d.kind === "extras" ? " (extras)" : ""}</option>`)}</select></label>
+        <label>Batch<select name="bake"></select></label>
       </div>
       <div class="scroll"><table class="list" style="margin-top:var(--space-4)">
         <tr><th>Bun</th><th>Price</th><th>Left</th><th>How many</th></tr>
@@ -311,9 +313,15 @@ async function newOrder() {
   const items = () => rows().map((tr) => ({ product_id: tr.dataset.p!, qty: Number(tr.querySelector<HTMLInputElement>("[name=qty]")!.value || 0) })).filter((i) => i.qty > 0);
   const refresh = () => {
     const day = days.find((d) => d.date === f.delivery_date.value);
-    for (const tr of rows()) tr.querySelector(".left")!.textContent = String(day?.products[tr.dataset.p!] ?? 0);
+    const bakes = day?.bakes ?? [], open = bakes.filter((b) => b.available), wasBake = f.bake.value;
+    render(f.bake, html`${bakes.map((b) => html`<option value="${b.bake}" ${b.available ? "" : "disabled"}>${b.label}${b.available ? "" : " (sold out)"}</option>`)}`);
+    f.bake.value = (open.find((b) => b.bake === wasBake) ?? open[0])?.bake ?? "";
+    const batch = bakes.find((b) => b.bake === f.bake.value);
+    render($("#no-err"), !days.length ? html`<div class="notice bad">No day is open for orders right now.</div>`
+      : !open.length ? html`<div class="notice bad">No batch is open on this day.</div>` : html``);
+    for (const tr of rows()) tr.querySelector(".left")!.textContent = String(batch?.products[tr.dataset.p!] ?? 0);
     const free = f.free.checked, deliv = f.fulfilment.value === "delivery";
-    const times = (deliv ? day?.delivery_times : day?.pickup_times) ?? [], was = f.time.value;
+    const times = (deliv ? batch?.delivery_times : batch?.pickup_times) ?? [], was = f.time.value;
     render(f.time, html`<option value="">No set time</option>${times.map((t) => html`<option value="${t.value}">${t.label}</option>`)}`);
     f.time.value = times.some((t) => t.value === was) ? was : "";
     $("#why").hidden = !free;
@@ -327,7 +335,6 @@ async function newOrder() {
   f.addEventListener("change", refresh);
   refresh();
   customerSuggestions(f);
-  if (!days.length) render($("#no-err"), html`<div class="notice bad">No day is open for orders right now.</div>`);
   f.onsubmit = async (e) => {
     e.preventDefault();
     const btn = f.querySelector<HTMLButtonElement>("button.primary")!;
@@ -335,7 +342,7 @@ async function newOrder() {
     try {
       const deliv = f.fulfilment.value === "delivery";
       const r = await call("/admin/create-order", {
-        name: (f.elements.namedItem("name") as HTMLInputElement).value, phone: f.phone.value, delivery_date: f.delivery_date.value, items: items(), fulfilment: f.fulfilment.value, time: f.time.value || null,
+        name: (f.elements.namedItem("name") as HTMLInputElement).value, phone: f.phone.value, delivery_date: f.delivery_date.value, bake: f.bake.value, items: items(), fulfilment: f.fulfilment.value, time: f.time.value || null,
         ...(deliv ? { address: f.address.value || null, delivery_fee_mvr: f.fee.value } : {}),
         notes: f.notes.value || null, ...(f.free.checked ? { free: true, free_reason: f.free_reason.value } : {}),
       });
@@ -421,7 +428,7 @@ async function orderDetail(id: string) {
         ${o.boat.phone ? html`<a href="tel:${o.boat.phone}">Call the boat: ${o.boat.phone}</a> · ` : ""}<a href="${o.boat.followme}" target="_blank" rel="noopener">Track on FollowMe</a></div>` : ""}
       ${o.map_url ? html`<p><a class="btn" href="${o.map_url}" target="_blank" rel="noopener">📍 Open pin in Google Maps</a></p>` : ""}
       ${o.notes ? html`<p class="muted">Notes: ${o.notes}</p>` : ""}
-      <p class="small">${o.fulfilment === "pickup" ? "Pickup" : "Delivery"} <b>${o.delivery_date}</b>${o.time_label ? html` at <b>${o.time_label}</b>` : ""} · ${copyBtn(o.status_url, "Copy customer's order link")}</p>
+      <p class="small">${o.fulfilment === "pickup" ? "Pickup" : "Delivery"} <b>${o.delivery_date}</b>${o.time_label ? html` at <b>${o.time_label}</b>` : ""}${o.bake_label ? ` · ${o.bake_label}` : ""} · ${copyBtn(o.status_url, "Copy customer's order link")}</p>
     </div>
     <div class="card">
       <h2>Items</h2>
@@ -509,44 +516,55 @@ async function production(date: string) {
   };
   const isToday = date === maleToday();
   const [r, lo] = await Promise.all([call(`/admin/production?date=${date}`), isToday ? call("/admin/leftovers") : null]);
-  const rows = r.products as Row[];
-  const sum = (k: keyof Row) => rows.reduce((a, p) => a + Number(p[k] ?? 0), 0);
+  type Bake = { bake: string; label: string; products: Row[] };
+  const bakes = r.bakes as Bake[];
+  const sum = (rows: Row[], k: keyof Row) => rows.reduce((a, p) => a + Number(p[k] ?? 0), 0);
   // Buns customers can still order as extras: what's baked (or planned, whichever is higher) and leftovers put on sale, minus all orders.
   const left = (p: Row) => Math.max(0, Math.max(p.planned ?? 0, p.baked) + p.leftover - p.preorders - p.extras);
+  const icon = (bake: string) => bake === "10:00" ? "☀️ " : bake === "16:00" ? "🌇 " : "";
+  const section = (b: Bake) => {
+    const rows = b.products, leftover = sum(rows, "leftover");
+    return html`<section style="margin-top:var(--space-5)">
+      <h3>${icon(b.bake)}${b.label}</h3>
+      <form class="bake-plan" data-bake="${b.bake}"><div class="scroll"><table class="list">
+        <tr><th>Bun</th><th>Baking</th><th>Baked</th>${leftover ? html`<th>Leftovers</th>` : ""}<th>Pre-orders</th><th>Extras sold</th><th>Extras left</th><th>Paid</th><th>Checking</th><th>Not paid</th></tr>
+        ${rows.map((p) => html`<tr>
+          <td>${p.product_name}</td>
+          <td>${p.linked ? html`<input name="${p.product_id}" type="number" min="0" step="1" value="${p.planned ?? ""}" placeholder="–" style="max-width:80px">` : html`<span class="muted small">not in bot</span>`}</td>
+          <td>${p.baked || html`<span class="muted">–</span>`}</td>${leftover ? html`<td>${p.leftover}</td>` : ""}
+          <td>${p.preorders}</td><td>${p.extras}</td><td><b>${left(p)}</b></td>
+          <td>${p.paid}</td><td>${p.checking}</td><td class="muted">${p.unpaid}</td></tr>`)}
+        <tr><td><b>Total</b></td><td>${sum(rows, "planned")}</td><td>${sum(rows, "baked")}</td>${leftover ? html`<td>${leftover}</td>` : ""}<td>${sum(rows, "preorders")}</td><td>${sum(rows, "extras")}</td>
+          <td><b>${rows.reduce((a, p) => a + left(p), 0)}</b></td><td>${sum(rows, "paid")}</td><td>${sum(rows, "checking")}</td><td class="muted">${sum(rows, "unpaid")}</td></tr>
+      </table></div>
+      <div class="row" style="margin-top:var(--space-3);flex-wrap:wrap">
+        <button>Save baking plan</button>
+        <span class="small muted grow">Same plan as the Telegram bot's /plan; Baked comes from /batch. Extras left = the higher of the two, minus all orders.</span>
+      </div></form>
+      <div data-msg="${b.bake}"></div>
+      <form class="bake-more" data-bake="${b.bake}" style="margin-top:var(--space-4)">
+        <h3>Add buns just made</h3>
+        <p class="small muted">How many more came out? They go on top of what's there now, so customers can order them straight away.</p>
+        <div class="row" style="flex-wrap:wrap">
+          ${rows.filter((p) => p.linked).map((p) => html`<label>${p.product_name}<input name="${p.product_id}" type="number" min="1" step="1" placeholder="0" style="max-width:80px"></label>`)}
+          <button>Add</button>
+        </div>
+      </form>
+    </section>`;
+  };
   shell("production", html`
     <div class="filters">
       <label>Day<input type="date" id="d" value="${date}"></label>
     </div>
     ${lo ? leftoversCard(lo) : ""}
     <h2>${r.label}</h2>
-    <p>Deliveries: <b>${r.deliveries} of ${r.settings.delivery_max_orders}</b> · Pre-orders: <b>${sum("preorders")} of ${r.settings.preorder_max_buns}</b> buns
+    <p>Deliveries: <b>${r.deliveries} of ${r.settings.delivery_max_orders}</b> · Pre-orders: <b>${bakes.reduce((a, b) => a + sum(b.products, "preorders"), 0)} of ${r.settings.preorder_max_buns}</b> buns
       <span class="muted small">(limits are in Days → Ordering settings)</span></p>
-    <form id="plan"><div class="scroll"><table class="list">
-      <tr><th>Bun</th><th>Baking</th><th>Baked</th>${sum("leftover") ? html`<th>Leftovers</th>` : ""}<th>Pre-orders</th><th>Extras sold</th><th>Extras left</th><th>Paid</th><th>Checking</th><th>Not paid</th></tr>
-      ${rows.map((p) => html`<tr>
-        <td>${p.product_name}</td>
-        <td>${p.linked ? html`<input name="${p.product_id}" type="number" min="0" step="1" value="${p.planned ?? ""}" placeholder="–" style="max-width:80px">` : html`<span class="muted small">not in bot</span>`}</td>
-        <td>${p.baked || html`<span class="muted">–</span>`}</td>${sum("leftover") ? html`<td>${p.leftover}</td>` : ""}
-        <td>${p.preorders}</td><td>${p.extras}</td><td><b>${left(p)}</b></td>
-        <td>${p.paid}</td><td>${p.checking}</td><td class="muted">${p.unpaid}</td></tr>`)}
-      <tr><td><b>Total</b></td><td>${sum("planned")}</td><td>${sum("baked")}</td>${sum("leftover") ? html`<td>${sum("leftover")}</td>` : ""}<td>${sum("preorders")}</td><td>${sum("extras")}</td>
-        <td><b>${rows.reduce((a, p) => a + left(p), 0)}</b></td><td>${sum("paid")}</td><td>${sum("checking")}</td><td class="muted">${sum("unpaid")}</td></tr>
-    </table></div>
-    <div class="row" style="margin-top:var(--space-3);flex-wrap:wrap">
-      <button>Save baking plan</button>
-      <span class="small muted grow">Same plan as the Telegram bot's /plan; Baked comes from /batch. Extras left = the higher of the two, minus all orders.</span>
-    </div></form>
-    <form id="more" style="margin-top:var(--space-4)">
-      <h3>Add buns just made</h3>
-      <p class="small muted">How many more came out? They go on top of what's there now, so customers can order them straight away.</p>
-      <div class="row" style="flex-wrap:wrap">
-        ${rows.filter((p) => p.linked).map((p) => html`<label>${p.product_name}<input name="${p.product_id}" type="number" min="1" step="1" placeholder="0" style="max-width:80px"></label>`)}
-        <button>Add</button>
-      </div>
-    </form>
+    ${bakes.map(section)}
     <div id="prod-msg"></div>
     <p class="small muted" style="margin-top:var(--space-3)">Paid = paid or delivered. Checking = waiting for the bank. Cancelled and rejected orders are left out.</p>`);
-  const msg = (m: string, ok = false) => render($("#prod-msg"), html`<div class="notice ${ok ? "ok" : "bad"} small" style="margin-top:var(--space-3)">${m}</div>`);
+  // Saved messages show under the batch they're about; the leftovers and day messages at the bottom.
+  const msg = (m: string, ok = false, bake = "") => render(bake ? app.querySelector<HTMLElement>(`[data-msg="${bake}"]`)! : $("#prod-msg"), html`<div class="notice ${ok ? "ok" : "bad"} small" style="margin-top:var(--space-3)">${m}</div>`);
   $<HTMLInputElement>("#d").onchange = (e) => go({ tab: "production", date: (e.target as HTMLInputElement).value });
   const leftForm = $<HTMLFormElement>("#leftovers");
   if (leftForm) {
@@ -575,38 +593,42 @@ async function production(date: string) {
       }
     };
   }
-  $<HTMLFormElement>("#plan").onsubmit = async (e) => {
-    e.preventDefault();
-    const lines = [...(e.target as HTMLFormElement).querySelectorAll<HTMLInputElement>("input[type=number]")]
-      .filter((i) => i.value !== "").map((i) => ({ product_id: i.name, qty: Number(i.value) }));
-    if (!lines.length) return msg("Enter how many of each bun you're baking.");
-    const short = rows.find((p) => lines.some((l) => l.product_id === p.product_id && l.qty < p.preorders));
-    if (short && !confirm(`${short.product_name}: that's fewer than the ${short.preorders} pre-ordered. Save anyway?`)) return;
-    try {
-      await call("/admin/plan", { date, lines });
-      await production(date);
-      msg("Baking plan saved. Customers can now order the extras.", true);
-    } catch (err) {
-      msg((err as Error).message);
-    }
-  };
-  $<HTMLFormElement>("#more").onsubmit = async (e) => {
-    e.preventDefault();
-    // On top of the higher of planned and baked: that's what the stock is counted from.
-    const lines = [...(e.target as HTMLFormElement).querySelectorAll<HTMLInputElement>("input[type=number]")]
-      .filter((i) => Number(i.value) > 0).map((i) => {
-        const p = rows.find((r) => r.product_id === i.name)!;
-        return { product_id: i.name, qty: Math.max(p.planned ?? 0, p.baked) + Math.floor(Number(i.value)) };
-      });
-    if (!lines.length) return msg("Enter how many more of a bun you made.");
-    try {
-      await call("/admin/plan", { date, lines });
-      await production(date);
-      msg("Added. Customers can order them now.", true);
-    } catch (err) {
-      msg((err as Error).message);
-    }
-  };
+  for (const b of bakes) {
+    const plan = app.querySelector<HTMLFormElement>(`form.bake-plan[data-bake="${b.bake}"]`)!;
+    plan.onsubmit = async (e) => {
+      e.preventDefault();
+      const lines = [...plan.querySelectorAll<HTMLInputElement>("input[type=number]")]
+        .filter((i) => i.value !== "").map((i) => ({ product_id: i.name, qty: Number(i.value) }));
+      if (!lines.length) return msg("Enter how many of each bun you're baking.", false, b.bake);
+      const short = b.products.find((p) => lines.some((l) => l.product_id === p.product_id && l.qty < p.preorders));
+      if (short && !confirm(`${short.product_name}: that's fewer than the ${short.preorders} pre-ordered. Save anyway?`)) return;
+      try {
+        await call("/admin/plan", { date, bake: b.bake, lines });
+        await production(date);
+        msg(`${b.label} plan saved.`, true, b.bake);
+      } catch (err) {
+        msg((err as Error).message, false, b.bake);
+      }
+    };
+    const more = app.querySelector<HTMLFormElement>(`form.bake-more[data-bake="${b.bake}"]`)!;
+    more.onsubmit = async (e) => {
+      e.preventDefault();
+      // On top of the higher of planned and baked: that's what the stock is counted from.
+      const lines = [...more.querySelectorAll<HTMLInputElement>("input[type=number]")]
+        .filter((i) => Number(i.value) > 0).map((i) => {
+          const p = b.products.find((x) => x.product_id === i.name)!;
+          return { product_id: i.name, qty: Math.max(p.planned ?? 0, p.baked) + Math.floor(Number(i.value)) };
+        });
+      if (!lines.length) return msg("Enter how many more of a bun you made.", false, b.bake);
+      try {
+        await call("/admin/plan", { date, bake: b.bake, lines });
+        await production(date);
+        msg(`Added to the ${b.label}. Customers can order them now.`, true, b.bake);
+      } catch (err) {
+        msg((err as Error).message, false, b.bake);
+      }
+    };
+  }
 }
 
 /** Today only: the last baking day's leftovers, counted like the Sales tab, to put on sale again at the same price. */

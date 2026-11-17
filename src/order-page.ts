@@ -29,6 +29,8 @@ interface View {
   overpaid_mvr: string | null; // in the order's currency
   fulfilment: "delivery" | "pickup";
   time_label: string | null;
+  bake?: string;
+  bake_label?: string;
   pickup_place: string | null;
   pickup_phone: string | null;
   pickup_map_url: string | null;
@@ -125,7 +127,7 @@ function paint() {
         <tr class="total"><td>Total</td><td>${mvr(v.total_mvr)}</td></tr>
         ${v.currency === "USD" ? html`<tr class="total"><td>You pay in USD</td><td>USD ${v.total_usd}</td></tr>` : ""}
       </table>
-      <p style="margin-top:var(--space-4)"><b>${v.fulfilment === "pickup" ? "Pickup" : "Delivery"}:</b> ${v.delivery_label}${v.time_label ? ` · ${v.time_label}` : ""}<br>
+      <p style="margin-top:var(--space-4)"><b>${v.fulfilment === "pickup" ? "Pickup" : "Delivery"}:</b> ${v.delivery_label}${v.time_label ? ` · ${v.time_label}` : ""}${v.bake_label ? ` · ${v.bake_label}` : ""}<br>
         <b>${v.fulfilment === "pickup" ? "For" : "To"}:</b> ${v.customer_name}, ${v.phone}
         ${v.boat ? html`<br>⛴ To the boat <b>${v.boat.name}</b>${v.boat.time ? ` at ${v.boat.time}` : ""}` : ""}
         ${v.map_url ? html`<br><a href="${v.map_url}" target="_blank" rel="noopener">📍 Your delivery pin</a>` : ""}
@@ -301,7 +303,7 @@ async function cancelOrder(change: boolean) {
     view = await api<View>("/cancel-order", { body: { t: token } });
     track("cancel", { o: v.public_id, change });
     if (change) {
-      store("alinabun.change", { date: v.delivery_date, items: v.items.filter((i) => !i.gift_no).map((i) => ({ product_id: i.product_id, qty: i.qty })), fulfilment: v.fulfilment, notes: v.notes, currency: v.currency });
+      store("alinabun.change", { date: v.delivery_date, items: v.items.filter((i) => !i.gift_no).map((i) => ({ product_id: i.product_id, qty: i.qty })), fulfilment: v.fulfilment, notes: v.notes, currency: v.currency, bake: v.bake });
       location.href = "/";
       return;
     }
