@@ -33,6 +33,7 @@ let boat: Vessel | null = null;
 let cutoff = "6 pm"; // from the server's cutoff hour
 let minDelivery = 0; // buns; delivery needs at least this many (from the server)
 let usdRate = 0; // MVR per USD in hundredths (from the server); 0 = no USD option
+let pausedUntil: string | null = null; // "1 PM" while delivery is paused today (admin Days tab)
 // deno-lint-ignore no-explicit-any
 let leaflet: any = null;
 
@@ -42,6 +43,7 @@ async function load() {
     [{ products }, r] = await Promise.all([api("/catalog"), api("/delivery-dates")]);
     ({ dates, today_date: today, pickup_place: pickupPlace, pickup_phone: pickupPhone, pickup_map_url: pickupMap } = r);
     minDelivery = Number(r.delivery_min_buns ?? 0);
+    pausedUntil = r.delivery_paused_until ?? null;
     usdRate = r.usd_rate ? Math.round(Number(r.usd_rate) * 100) : 0;
     const hr = Number(r.cutoff_hour);
     cutoff = `${hr % 12 || 12} ${hr < 12 ? "am" : "pm"}`;
@@ -59,6 +61,7 @@ async function load() {
   const saved = savedDetails();
   const firstOpen = dates.find((d) => d.available)?.date;
   render(app, html`
+    ${pausedUntil ? html`<div class="notice warn">🛵 Delivery is paused until <b>${pausedUntil}</b> today. Today's deliveries go out after ${pausedUntil}.</div>` : ""}
     <div id="mine"></div>
     <form id="f" novalidate>
       <div class="card">

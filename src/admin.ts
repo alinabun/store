@@ -814,7 +814,19 @@ async function days() {
   const [now, ...later] = r.weekly as { from: string; label: string; weekdays: number[] }[];
   const editing = (later.at(-1) ?? now).weekdays;
   const st = r.settings;
+  const clock = (t: string) => { const [h, m] = t.split(":").map(Number); return `${h % 12 || 12}${m ? `:${String(m).padStart(2, "0")}` : ""} ${h < 12 ? "AM" : "PM"}`; };
   shell("days", html`
+    <div class="card">
+      <h2>Pause delivery</h2>
+      ${st.delivery_paused_until ? html`
+        <p>Delivery is paused until <b>${clock(st.delivery_paused_until)}</b> today. Customers can still order: delivery times start after ${clock(st.delivery_paused_until)}, and pickup is as usual.</p>
+        <div class="row"><button id="pause-off">Resume delivery now</button><span id="pause-msg" class="small"></span></div>`
+      : st.pause_times.length ? html`
+        <p class="hint">For a few hours today, e.g. when no one can deliver. Customers can still order: they see delivery times from when the pause ends, and pickup as usual. It ends by itself.</p>
+        <div class="row" style="flex-wrap:wrap"><label class="row" style="margin:0">Until <select id="pause-until" style="width:auto">${st.pause_times.map((t: string) => html`<option value="${t}">${clock(t)}</option>`)}</select></label>
+          <button id="pause-on">Pause delivery</button><span id="pause-msg" class="small"></span></div>`
+      : html`<p class="hint">Delivery can be paused for a few hours during the day.</p>`}
+    </div>
     <form class="card" id="settings">
       <h2>Ordering settings</h2>
       <div class="filters">
@@ -857,6 +869,16 @@ async function days() {
             d.off === "weekly" ? "Open this day" : d.off ? "Open again" : d.opened ? "Close again" : "Make off day"}</button></td></tr>`)}
     </table>
     <div id="day-err"></div>`);
+  const pause = async (until: string | null) => {
+    try {
+      await call("/admin/config", { delivery_paused_until: until });
+      await days();
+    } catch (e) {
+      $("#pause-msg").textContent = (e as Error).message;
+    }
+  };
+  if (st.delivery_paused_until) $("#pause-off").onclick = () => pause(null);
+  else if (st.pause_times.length) $("#pause-on").onclick = () => pause($<HTMLSelectElement>("#pause-until").value);
   let pickupPin: Pin | undefined;
   pinPicker($("#pickup-map"), st.pickup_pin, (p) => (pickupPin = { lat: p.lat, lng: p.lng }))
     .catch(() => render($("#pickup-map"), html`<div class="notice bad">The map didn't load. Please refresh the page.</div>`));
