@@ -35,13 +35,19 @@ let cutoff = "6 pm"; // from the server's cutoff hour
 let minDelivery = 0; // buns; delivery needs at least this many (from the server)
 let usdRate = 0; // MVR per USD in hundredths (from the server); 0 = no USD option
 let pausedUntil: string | null = null; // "1 PM" while delivery is paused today (admin Days tab)
+const signedIn = store<{ session: string }>("alinabun.session");
+// The signed-in account: cash on delivery and credit, when a manager turned them on for it.
+let acct: { phone: string; cod: boolean; credit: { limit_mvr: string; owed_mvr: string } | null } | null = null;
 // deno-lint-ignore no-explicit-any
 let leaflet: any = null;
 
 async function load() {
   try {
     let r;
-    [{ products }, r] = await Promise.all([api("/catalog"), api("/delivery-dates")]);
+    let me;
+    [{ products }, r, me] = await Promise.all([api("/catalog"), api("/delivery-dates"),
+      signedIn ? api<NonNullable<typeof acct>>("/account/me", { body: { session: signedIn.session } }).catch(() => null) : null]);
+    acct = me?.cod || me?.credit ? me : null;
     ({ dates, today_date: today, pickup_place: pickupPlace, pickup_phone: pickupPhone, pickup_map_url: pickupMap } = r);
     minDelivery = Number(r.delivery_min_buns ?? 0);
     pausedUntil = r.delivery_paused_until ?? null;
@@ -160,8 +166,20 @@ async function load() {
         <textarea id="notes" name="notes" maxlength="500" placeholder="Anything we should know?"></textarea>
       </div>
 
-      ${usdRate ? html`
+      ${acct ? html`
       <div class="card">
+        <h2>How will you pay?</h2>
+        <div class="dates" role="radiogroup" aria-label="How will you pay?">
+          <label><input type="radio" name="payment" value="bank" checked><span>Bank transfer</span></label>
+          ${acct.cod ? html`<label><input type="radio" name="payment" value="cod"><span>💵 Cash on delivery</span></label>` : ""}
+          ${acct.credit ? html`<label><input type="radio" name="payment" value="credit"><span>📒 On credit (pay later)</span></label>` : ""}
+        </div>
+        <p class="hint" id="cod-hint" hidden>Cash on delivery is for orders on your account's number, ${acct.phone}. Please have the cash ready when you get your buns.</p>
+        ${acct.credit ? html`<p class="hint" id="credit-hint" hidden>For orders on your account's number, ${acct.phone}. You owe MVR ${acct.credit.owed_mvr}; your credit limit is MVR ${acct.credit.limit_mvr}.</p>` : ""}
+      </div>` : ""}
+
+      ${usdRate ? html`
+      <div class="card" id="cur-card">
         <h2>Pay in</h2>
         <div class="dates" role="radiogroup" aria-label="Pay in">
           <label><input type="radio" name="currency" value="MVR" checked><span>MVR</span></label>
@@ -172,7 +190,7 @@ async function load() {
 
       <div id="err" role="alert"></div>
       <button class="primary" id="submit">Place order</button>
-      <p class="hint" style="text-align:center">Next, you'll see how to pay by bank transfer.</p>
+      <p class="hint" style="text-align:center" id="next-hint">Next, you'll see how to pay by bank transfer.</p>
     </form>
     <div class="bar"><div class="wrap"><span id="sum">No buns yet</span><button type="button" class="secondary" id="go">Order ↓</button></div></div>
   `);
@@ -213,7 +231,7 @@ async function load() {
     if (name === "bake") { refreshBake(); track("day", { date: day()?.date, bake: batch()?.bake }); }
     if (name === "fulfilment") refreshFulfilment();
     if (name === "deliver_to") refreshDeliverTo();
-    if (name === "currency") update();
+    if (name === "currency" || name === "payment") update();
   });
   refreshDay();
   showSavedDetails();
@@ -520,11 +538,24 @@ function update() {
   $("#sum").textContent = buns ? `${buns} bun${buns > 1 ? "s" : ""} · ${mvr((laari + withFee) / 100)}${withFee ? " incl. delivery" : ""}${usd}${bk ? ` · ${bk.label}` : ""}` : "No buns yet";
   const hint = document.querySelector<HTMLElement>("#usd-hint");
   if (hint) hint.hidden = currency() !== "USD";
+  // Cash is always MVR.
+  const curCard = document.querySelector<HTMLElement>("#cur-card");
+  if (curCard) curCard.hidden = payment() !== "bank";
+  const codHint = document.querySelector<HTMLElement>("#cod-hint");
+  if (codHint) codHint.hidden = payment() !== "cod";
+  const creditHint = document.querySelector<HTMLElement>("#credit-hint");
+  if (creditHint) creditHint.hidden = payment() !== "credit";
+  $("#next-hint").textContent = payment() === "cod" ? "You'll pay in cash when you get your buns."
+    : payment() === "credit" ? "It goes on your account: you pay what you owe later." : "Next, you'll see how to pay by bank transfer.";
   if (fulfilment() === "delivery" && buns < minDelivery) $("#sum").textContent += ` · delivery is for ${minDelivery}+ buns`;
   showError("");
 }
 
-const currency = () => usdRate && document.querySelector<HTMLInputElement>("input[name=currency]:checked")?.value === "USD" ? "USD" : "MVR";
+const payment = () => {
+  const v = acct && document.querySelector<HTMLInputElement>("input[name=payment]:checked")?.value;
+  return v === "cod" || v === "credit" ? v : "bank";
+};
+const currency = () => usdRate && payment() === "bank" && document.querySelector<HTMLInputElement>("input[name=currency]:checked")?.value === "USD" ? "USD" : "MVR";
 
 function showError(msg: string, why = "form", code?: number) {
   if (msg) track("blocked", { why, m: msg, code });
@@ -564,7 +595,7 @@ async function submit(e: SubmitEvent) {
 
   track("submit", {
     date: date.date, kind: date.kind, bake: bk.bake, buns, items: Object.fromEntries(items.map((i) => [i.product_id, i.qty])), f: fulfilment(), boat: toBoat,
-    time, cur: currency(), saved: !!document.querySelector<HTMLSelectElement>("#saved")?.value,
+    time, cur: currency(), pay: payment(), saved: !!document.querySelector<HTMLSelectElement>("#saved")?.value,
   });
   const btn = $<HTMLButtonElement>("#submit");
   btn.disabled = true;
@@ -572,7 +603,8 @@ async function submit(e: SubmitEvent) {
   try {
     const r = await api<{ status_token: string; public_id: string }>("/create-order", {
       body: { name: get("name"), phone: get("phone"), fulfilment: fulfilment(), ...(fulfilment() === "delivery" && pin ? { lat: pin.lat, lng: pin.lng, address: get("address") || null } : {}),
-        ...(toBoat ? { vessel_id: boat!.id, boat_time: $<HTMLInputElement>("#boat-time").value } : { time }), notes: get("notes") || null, delivery_date: date.date, bake: bk.bake, items, currency: currency() },
+        ...(toBoat ? { vessel_id: boat!.id, boat_time: $<HTMLInputElement>("#boat-time").value } : { time }), notes: get("notes") || null, delivery_date: date.date, bake: bk.bake, items, currency: currency(),
+        ...(payment() !== "bank" ? { payment: payment(), session: signedIn!.session } : {}) },
     });
     rememberDetails({ name: get("name"), phone: get("phone"), fulfilment: fulfilment(), deliverTo: deliverTo(), address: fulfilment() === "delivery" ? get("address") : "", pin: fulfilment() === "delivery" ? pin : null, boat: toBoat ? boat : null });
     rememberOrder(r.status_token, r.public_id);
@@ -589,5 +621,4 @@ async function submit(e: SubmitEvent) {
 load();
 
 // Signed in: install and notifications under the form.
-const signedIn = store<{ session: string }>("alinabun.session");
 if (signedIn) notifyFor({ session: signedIn.session });

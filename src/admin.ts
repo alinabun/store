@@ -168,7 +168,7 @@ async function orders(p: URLSearchParams) {
           <td>${o.customer_name}<div class="small muted">${o.phone}</div></td>
           <td>${o.delivery_date}${o.bake_label ? html`<div class="small muted">${o.bake_label}</div>` : ""}</td>
           <td>${mvr(o.total_mvr)}<div class="small muted">${o.currency === "USD" ? `pays USD ${o.total_usd} · ` : ""}${o.total_buns} buns</div></td>
-          <td>${chip(o.status)} ${o.fulfilment === "pickup" ? html`<span class="chip">pickup</span>` : ""} ${o.entered_by ? html`<span class="chip">by us</span>` : ""} ${o.cod ? html`<span class="chip">💵 cash</span>` : ""} ${o.needs_review ? html`<span class="chip review">review</span>` : ""} ${String(o.on_telegram) === "false" ? html`<span class="chip review">not on Telegram</span>` : ""}</td>
+          <td>${chip(o.status)} ${o.fulfilment === "pickup" ? html`<span class="chip">pickup</span>` : ""} ${o.entered_by ? html`<span class="chip">by us</span>` : ""} ${o.cod ? html`<span class="chip">💵 cash</span>` : ""} ${o.credit ? html`<span class="chip">${o.given_away ? "🎁 given" : "📒 credit"}</span>` : ""} ${o.needs_review ? html`<span class="chip review">review</span>` : ""} ${String(o.on_telegram) === "false" ? html`<span class="chip review">not on Telegram</span>` : ""}</td>
         </tr>`)}
     </table></div>
     ${r.orders.length ? "" : html`<p class="muted">No orders.</p>`}
@@ -188,13 +188,13 @@ async function orders(p: URLSearchParams) {
   $("#next")?.addEventListener("click", () => go({ ...filters, page: String(page + 1) }));
 }
 
-// ── Pack: the day's orders as a kanban board. One lane per batch; columns New, Packing, Ready, Delivered; cards are orders. ──
+// ── Pack: the day's orders as a kanban board. One lane per batch; columns New, Packing, Ready, Out for delivery, Delivered. ──
 
 type PackItem = { name: string; qty: number; free: boolean };
 type PackOrder = {
   public_id: string; customer_name: string; phone: string; paid: boolean;
-  stage: "new" | "packing" | "ready" | "delivered";
-  payment: "paid" | "free" | "checking" | "unpaid" | "cash" | null; // null for cancelled ones
+  stage: "new" | "packing" | "ready" | "out" | "delivered";
+  payment: "paid" | "free" | "checking" | "unpaid" | "cash" | "credit" | null; // null for cancelled ones
   cash_mvr: string | null; // cash on delivery: collect this
   cancelled: boolean; archived: boolean;
   bake: string; bake_label: string;
@@ -203,9 +203,10 @@ type PackOrder = {
   address: string | null; notes: string | null; items: PackItem[];
 };
 const LANES: [string, string, string][] = [["10:00", "☀️", "10 AM batch"], ["16:00", "🌇", "4 PM batch"]];
-const STAGES: [PackOrder["stage"], string][] = [["new", "New"], ["packing", "Packing"], ["ready", "Ready"], ["delivered", "Delivered"]];
+const STAGES: [PackOrder["stage"], string][] = [["new", "New"], ["packing", "Packing"], ["ready", "Ready"], ["out", "Out for delivery"], ["delivered", "Delivered"]];
 const PAY: Record<NonNullable<PackOrder["payment"]>, [string, string]> = {
   paid: ["✓ Paid", "ok"], free: ["🎁 Free", "free"], checking: ["Checking", "warn"], unpaid: ["Unpaid", "bad"], cash: ["💵 Cash", "warn"],
+  credit: ["📒 Credit", "free"],
 };
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const bunCount = (os: PackOrder[]) => os.reduce((n, o) => n + o.items.reduce((a, i) => a + i.qty, 0), 0);
@@ -267,6 +268,8 @@ async function pack(date: string) {
     const todo = ids.filter((id) => orders?.find((o) => o.public_id === id)?.stage !== stage);
     if (!todo.length) return;
     if (stage === "delivered" && !confirm(`Mark ${plural(todo.length, "order")} delivered? Customers who ordered in Telegram get a message. This can't be undone.`)) return;
+    const deliveries = todo.filter((id) => orders?.find((o) => o.public_id === id)?.fulfilment === "delivery").length;
+    if (stage === "out" && deliveries && !confirm(`Tell ${plural(deliveries, "customer")} their order is out for delivery? Those with notifications on, or who ordered in Telegram, get a message.`)) return;
     await doAct("/admin/pack-move", { ids: todo, stage });
   }
   const archive = (ids: string[], archived = true) => doAct("/admin/pack-archive", { ids, archived });
@@ -571,6 +574,11 @@ async function orderDetail(id: string) {
     ${o.customer_message ? html`<div class="notice info small">Customer sees: ${o.customer_message}</div>` : ""}
     ${o.cod ? html`<div class="notice warn"><b>💵 Cash on delivery: collect ${mvr(o.total_mvr)}.</b>${o.status === "awaiting_payment"
       ? " The buns are held; it doesn't expire. Moving it to Delivered on the Pack tab records the cash as paid." : ""}</div>` : ""}
+    ${o.credit ? html`<div class="notice info"><b>${o.given_away ? "🎁 Was on credit, now a giveaway." : `📒 On credit: ${mvr(o.total_mvr)} owed on the customer's account.`}</b>${o.given_away ? ""
+      : " It doesn't expire. Record what they pay in Customers → Accounts."}
+      ${!o.given_away && ["awaiting_payment", "paid", "delivered"].includes(o.status) ? html`<form id="giveaway" class="row" style="margin-top:var(--space-2)">
+        <input name="reason" placeholder="Who is it for? (e.g. Birthday gift)" required maxlength="300">
+        <button>🎁 Give away</button></form><div id="giveaway-err"></div>` : ""}</div>` : ""}
     ${o.entered_by ? html`<div class="notice info small">Entered by ${o.entered_by}.${o.status === "awaiting_payment"
       ? " The buns are held until you mark it paid or cancel it; it doesn't expire. The customer can also pay with the link below." : ""}</div>` : ""}
     <div class="card">
@@ -640,6 +648,17 @@ async function orderDetail(id: string) {
       await orderDetail(o.public_id);
     } catch (err) {
       render($("#notify-err"), html`<div class="notice bad">${(err as Error).message}</div>`);
+    }
+  };
+  const ga = document.querySelector<HTMLFormElement>("#giveaway");
+  if (ga) ga.onsubmit = async (e) => {
+    e.preventDefault();
+    if (!confirm(`Make ${o.public_id} a giveaway? The customer won't owe ${mvr(o.total_mvr)} for it any more.`)) return;
+    try {
+      await call("/admin/give-away", { id: o.public_id, reason: ga.reason.value });
+      await orderDetail(o.public_id);
+    } catch (err) {
+      render($("#giveaway-err"), html`<div class="notice bad">${(err as Error).message}</div>`);
     }
   };
   const free = document.querySelector<HTMLFormElement>("#free");
@@ -1128,9 +1147,27 @@ async function invoiceView(number: string) {
   });
 }
 
+type Account = {
+  id: number; name: string | null; phone: string; verified_at: string; orders: number; cod: boolean; cod_by: string | null;
+  credit_limit_mvr: string | null; credit_by: string | null; owed_mvr: string;
+};
+
 async function customers(sort: string) {
-  const [r, p] = await Promise.all([call(`/admin/customers?sort=${sort}`), call("/admin/push")]);
+  const [r, p, a] = await Promise.all([call(`/admin/customers?sort=${sort}`), call("/admin/push"), call("/admin/accounts")]);
   shell("customers", html`
+    <details class="card" open><summary><b>🙋 Accounts: ${a.accounts.length}</b></summary>
+      <div class="scroll"><table class="list">
+        <tr><th>Name</th><th>Phone</th><th>Signed up</th><th>Orders</th><th>💵 Cash on delivery</th><th>📒 Credit</th></tr>
+        ${a.accounts.map((c: Account) => html`<tr>
+          <td>${c.name ?? "—"}</td><td>${c.phone}</td><td>${when(c.verified_at)}</td><td>${c.orders}</td>
+          <td><label><input type="checkbox" class="acct-cod" data-id="${c.id}" ${c.cod ? "checked" : ""}> ${c.cod ? `On${c.cod_by ? ` (${c.cod_by})` : ""}` : "Off"}</label></td>
+          <td>${c.credit_limit_mvr !== null || Number(c.owed_mvr) !== 0 ? html`
+              ${Number(c.owed_mvr) > 0 ? html`<b class="${c.credit_limit_mvr !== null && Number(c.owed_mvr) >= Number(c.credit_limit_mvr) ? "down" : ""}">Owes ${mvr(c.owed_mvr)}</b>` : html`Owes nothing`}
+              <div class="small muted">${c.credit_limit_mvr !== null ? `Limit ${mvr(c.credit_limit_mvr)}` : "Credit off"}</div>` : html`<span class="muted">Off</span>`}
+            <div><button class="pk-link" data-credit-limit="${c.id}">Set limit</button>
+              ${c.credit_limit_mvr !== null || Number(c.owed_mvr) !== 0 ? html`<button class="pk-link" data-credit-pay="${c.id}">Record payment</button>` : ""}</div></td></tr>`)}
+      </table></div>
+      <p class="hint">Customers who signed up on the store's Account page (their number is proven on WhatsApp). While signed in, for orders on their own number, they can choose cash on delivery if it's on, and order on credit (pay later) while what they owe stays within their limit. We hear on Telegram when someone who owes orders more, or tries to go over.</p></details>
     <details class="card"><summary><b>🔔 Notifications on: ${p.customers.length}</b></summary>
       <div class="scroll"><table class="list">
         <tr><th>Name</th><th>Phone</th><th>Phones</th><th>Since</th><th>Latest order</th></tr>
@@ -1147,6 +1184,48 @@ async function customers(sort: string) {
       ${r.customers.map((c: Record<string, string>) => html`<tr><td>${c.phone}</td><td>${c.name}</td><td>${c.paid_orders}</td><td><b>${c.buns_bought}</b></td><td>${when(c.last_paid_at)}</td></tr>`)}
     </table></div>`);
   $<HTMLSelectElement>("#sort").onchange = (e) => go({ tab: "customers", sort: (e.target as HTMLSelectElement).value });
+  const byId = (id: string) => a.accounts.find((c: Account) => c.id === Number(id)) as Account;
+  for (const b of document.querySelectorAll<HTMLButtonElement>("[data-credit-limit]")) {
+    b.onclick = async () => {
+      const c = byId(b.dataset.creditLimit!);
+      const v = prompt(`Credit limit for ${c.name ?? c.phone}, in MVR (whole MVR). Leave empty to turn credit off.`, c.credit_limit_mvr ? String(Number(c.credit_limit_mvr)) : "");
+      if (v === null) return;
+      try {
+        await call("/admin/account-credit", { customer_id: c.id, limit_mvr: v.trim() === "" ? null : Number(v) });
+        go({ tab: "customers", sort });
+      } catch (e) {
+        alert((e as Error).message);
+      }
+    };
+  }
+  for (const b of document.querySelectorAll<HTMLButtonElement>("[data-credit-pay]")) {
+    b.onclick = async () => {
+      const c = byId(b.dataset.creditPay!);
+      const v = prompt(`${c.name ?? c.phone} owes ${mvr(c.owed_mvr)}. How much did they pay, in MVR? (A negative amount corrects a mistake.)`, String(Number(c.owed_mvr) > 0 ? Number(c.owed_mvr) : ""));
+      if (!v?.trim()) return;
+      const note = prompt("Note (optional), e.g. how they paid:") ?? "";
+      try {
+        const r = await call("/admin/credit-payment", { customer_id: c.id, amount_mvr: Number(v), note: note.trim() || null });
+        alert(`Recorded. They owe ${mvr(r.owed_mvr)} now.`);
+        go({ tab: "customers", sort });
+      } catch (e) {
+        alert((e as Error).message);
+      }
+    };
+  }
+  for (const box of document.querySelectorAll<HTMLInputElement>(".acct-cod")) {
+    box.onchange = async () => {
+      box.disabled = true;
+      try {
+        await call("/admin/account-cod", { customer_id: Number(box.dataset.id), on: box.checked });
+        go({ tab: "customers", sort });
+      } catch (e) {
+        box.checked = !box.checked;
+        box.disabled = false;
+        alert((e as Error).message);
+      }
+    };
+  }
 }
 
 // ── Sales ──

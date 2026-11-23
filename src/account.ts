@@ -16,9 +16,11 @@ async function show() {
   const s = store<Session>(SESSION_KEY);
   if (s) {
     try {
-      const me = await api<{ phone: string; name: string }>("/account/me", { body: { session: s.session } });
+      const me = await api<{ phone: string; name: string; cod: boolean; credit: { limit_mvr: string; owed_mvr: string } | null }>("/account/me", { body: { session: s.session } });
       return render(app, html`<div class="card"><h2>Your account</h2>
         <p>Signed in as <strong>${me.name}</strong>, ${me.phone}. Your phone number is verified.</p>
+        ${me.cod ? html`<p>💵 You can pay cash on delivery: choose it on the order form, for orders on this number.</p>` : ""}
+        ${me.credit ? html`<p>📒 You can order on credit and pay later, up to MVR ${me.credit.limit_mvr}. You owe <b>MVR ${me.credit.owed_mvr}</b>.</p>` : ""}
         <p><a class="btn" href="/">Order buns</a></p>
         <button type="button" class="secondary" id="out">Sign out</button></div>`), $("#out").onclick = signOut, notifyFor({ session: s.session });
     } catch (e) {

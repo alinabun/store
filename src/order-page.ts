@@ -25,6 +25,8 @@ interface View {
   checking_by_hand: boolean;
   on_hold: boolean;
   cod?: boolean; // cash on delivery: no pay steps
+  credit?: boolean; // on the account's credit: no pay steps, they pay what they owe later
+  out_for_delivery?: boolean; // on its way (the Pack board's Out for delivery)
   bank: { bank: string; account_name: string; account_number: string } | null;
   qr: string | null;
   paid_amount: string | null;
@@ -72,6 +74,8 @@ async function load(quiet = false) {
 function headline(v: View): Raw {
   switch (v.status) {
     case "awaiting_payment":
+      if (v.out_for_delivery) return html`<div class="notice ok"><b>🛵 Out for delivery!</b> Your buns are on their way.${v.cod ? html` Please have ${money(v, v.total_mvr)} in cash ready.` : ""}</div>`;
+      if (v.credit) return html`<div class="notice ok"><b>Order placed on your account's credit.</b> See you on ${v.delivery_label}! You pay what you owe later.</div>`;
       return v.cod
         ? html`<div class="notice ok"><b>Order placed! 💵 Please have ${money(v, v.total_mvr)} in cash ready</b> when your buns ${v.fulfilment === "pickup" ? "are picked up" : "arrive"} on ${v.delivery_label}.</div>`
         : html`<div class="notice warn"><b>Waiting for your payment</b></div>`;
@@ -79,7 +83,10 @@ function headline(v: View): Raw {
       return v.checking_by_hand
         ? html`<div class="notice warn"><b>We're checking your payment by hand.</b> We'll update this page soon. No need to pay again.</div>`
         : html`<div class="notice warn"><b>We're checking your payment with the bank.</b> This usually takes up to 5 minutes. This page updates by itself.</div>`;
-    case "paid": return html`<div class="notice ok"><b>Paid, see you on ${v.delivery_label}!</b></div>`;
+    case "paid":
+      if (v.out_for_delivery) return html`<div class="notice ok"><b>🛵 Out for delivery!</b> Your buns are on their way.</div>`;
+      return v.credit ? html`<div class="notice ok"><b>On your account's credit.</b> See you on ${v.delivery_label}!</div>`
+        : html`<div class="notice ok"><b>Paid, see you on ${v.delivery_label}!</b></div>`;
     case "delivered": return html`<div class="notice ok"><b>Delivered.</b> Enjoy your buns!</div>`;
     case "cancelled": return html`<div class="notice bad"><b>This order was cancelled.</b> <a href="/">Order again</a></div>`;
     case "rejected": return html`<div class="notice bad"><b>This order was not accepted.</b></div>`;
@@ -104,10 +111,10 @@ function paint() {
 
     ${v.pay_by ? html`<div class="notice warn small">Please pay by <b>${new Date(v.pay_by).toLocaleTimeString("en-GB", { timeZone: "Indian/Maldives", hour: "2-digit", minute: "2-digit" })}</b>.
       After that the order is cancelled and the buns go back on sale.</div>` : ""}
-    ${v.status === "awaiting_payment" && !v.on_hold && !v.cod ? payBlock(v) : ""}
+    ${v.status === "awaiting_payment" && !v.on_hold && !v.cod && !v.credit ? payBlock(v) : ""}
     ${v.can_cancel ? html`
       <div class="card">
-        <p style="margin-top:0"><b>Need to change something?</b> You can change or cancel this order ${v.cod ? "before we bring it" : "until you send your payment"}.</p>
+        <p style="margin-top:0"><b>Need to change something?</b> You can change or cancel this order ${v.cod || v.credit ? "before we bring it" : "until you send your payment"}.</p>
         <div class="row"><button class="secondary" id="change">Change order</button><button class="secondary" id="cancel">Cancel order</button></div>
         <div id="cancel-err"></div>
       </div>` : ""}
