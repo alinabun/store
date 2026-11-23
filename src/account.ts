@@ -1,5 +1,6 @@
 // "/account/" — sign up with a phone number, proven by sending a code to our WhatsApp (wa-codes/ reads it).
-import { $, api, copyBtn, html, loadError, render, store } from "./lib.ts";
+import { $, api, copyBtn, html, loadError, mvr, render, store } from "./lib.ts";
+import { busy, payBlock, type Payee, wirePay } from "./pay.ts";
 import { notifyFor } from "./push.ts";
 import { track } from "./track.ts";
 
@@ -8,21 +9,27 @@ const SIGNUP_KEY = "alinabun.signup"; // the try in progress, so coming back fro
 interface Session { session: string; phone: string; name: string }
 interface Signup { ticket: string; code: string; message: string; whatsapp_url: string; whatsapp_phone: string; phone: string; until: number }
 
+interface Credit {
+  limit_mvr: string | null; owed_mvr: string;
+  pay: { amount: string; bank: Payee["bank"]; qr: string | null } | null; // null while a payment is being checked
+  last_payment: { public_id: string; status: "awaiting_bank" | "paid" | "failed"; amount_mvr: string; received_mvr: string | null; checking_by_hand: boolean; message: string | null } | null;
+}
+interface Me { phone: string; name: string; cod: boolean; credit: Credit | null }
+
 const app = $("#app");
 let timer = 0;
+let me: Me;
+let poll = 0;
 
 async function show() {
   clearTimeout(timer);
   const s = store<Session>(SESSION_KEY);
   if (s) {
     try {
-      const me = await api<{ phone: string; name: string; cod: boolean; credit: { limit_mvr: string; owed_mvr: string } | null }>("/account/me", { body: { session: s.session } });
-      return render(app, html`<div class="card"><h2>Your account</h2>
-        <p>Signed in as <strong>${me.name}</strong>, ${me.phone}. Your phone number is verified.</p>
-        ${me.cod ? html`<p>💵 You can pay cash on delivery: choose it on the order form, for orders on this number.</p>` : ""}
-        ${me.credit ? html`<p>📒 You can order on credit and pay later, up to MVR ${me.credit.limit_mvr}. You owe <b>MVR ${me.credit.owed_mvr}</b>.</p>` : ""}
-        <p><a class="btn" href="/">Order buns</a></p>
-        <button type="button" class="secondary" id="out">Sign out</button></div>`), $("#out").onclick = signOut, notifyFor({ session: s.session });
+      me = await api<Me>("/account/me", { body: { session: s.session } });
+      paintAccount(s);
+      notifyFor({ session: s.session });
+      return;
     } catch (e) {
       if ((e as { status?: number }).status !== 401) return render(app, loadError(e));
       store(SESSION_KEY, null); // signed out elsewhere
@@ -31,6 +38,56 @@ async function show() {
   const p = store<Signup>(SIGNUP_KEY);
   if (p && p.until > Date.now()) return waiting(p);
   form();
+}
+
+/** The credit customer's own payment of what they owe: the order page's pay steps (pay.ts), for this amount. */
+const payee = (s: Session): Payee | null => me.credit?.pay ? {
+  id: "credit", amount: me.credit.pay.amount, currency: "MVR", qr: me.credit.pay.qr, bank: me.credit.pay.bank, what: "what you owe",
+  uploadUrl: (content_type, size) => api("/account/credit-slip-url", { body: { session: s.session, content_type, size } }),
+  send: async (pay) => {
+    me.credit = (await api<{ credit: Credit }>("/account/pay-credit", { body: { session: s.session, ...pay } })).credit;
+  },
+  repaint: () => paintAccount(s),
+} : null;
+
+function lastPayment(c: Credit) {
+  const p = c.last_payment;
+  if (!p) return "";
+  if (p.status === "awaiting_bank") {
+    return p.checking_by_hand
+      ? html`<div class="notice warn"><b>We're checking your payment of ${mvr(p.amount_mvr)} by hand.</b> No need to pay again.</div>`
+      : html`<div class="notice warn"><b>We're checking your payment with the bank.</b> This usually takes up to 5 minutes. This page updates by itself.</div>`;
+  }
+  if (p.status === "paid") return html`<div class="notice ok"><b>Thank you! We received ${mvr(p.received_mvr ?? p.amount_mvr)}.</b></div>`;
+  return html`<div class="notice bad">${p.message ?? "We couldn't use that payment."}</div>`;
+}
+
+function paintAccount(s: Session) {
+  const c = me.credit, p = payee(s);
+  render(app, html`<div class="card"><h2>Your account</h2>
+      <p>Signed in as <strong>${me.name}</strong>, ${me.phone}. Your phone number is verified.</p>
+      ${me.cod ? html`<p>💵 You can pay cash on delivery: choose it on the order form, for orders on this number.</p>` : ""}
+      ${c?.limit_mvr ? html`<p>📒 You can order on credit and pay later, up to ${mvr(c.limit_mvr)}.</p>` : ""}
+      <p><a class="btn" href="/">Order buns</a></p>
+      <button type="button" class="secondary" id="out">Sign out</button></div>
+    ${c ? html`<div class="card"><h2>📒 Your credit</h2>
+      <p style="font-size:1.25em;margin:0">You owe <b>${mvr(c.owed_mvr)}</b></p>
+      ${c.limit_mvr ? html`<p class="muted small">Your credit limit is ${mvr(c.limit_mvr)}.</p>` : ""}
+      ${lastPayment(c)}</div>` : ""}
+    ${p ? payBlock(p) : ""}`);
+  $("#out").onclick = signOut;
+  if (p) wirePay(p);
+  // While the bank check runs, look again every 20 seconds (not under someone choosing a screenshot).
+  clearInterval(poll);
+  if (c?.last_payment?.status === "awaiting_bank" && !c.last_payment.checking_by_hand) {
+    poll = setInterval(async () => {
+      if (document.hidden || busy()) return;
+      try {
+        me = await api<Me>("/account/me", { body: { session: s.session } });
+        paintAccount(s);
+      } catch { /* offline for a moment */ }
+    }, 20_000);
+  }
 }
 
 function form(msg = "") {
@@ -93,6 +150,7 @@ async function check(p: Signup) {
 }
 
 async function signOut() {
+  clearInterval(poll);
   const s = store<Session>(SESSION_KEY);
   store(SESSION_KEY, null);
   if (s) await api("/account/sign-out", { body: { session: s.session } }).catch(() => {});

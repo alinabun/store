@@ -1,8 +1,6 @@
 // "/order/?t=<status token>" — the customer's receipt and payment page.
-import { compressImage, readText, uploadTo } from "./image.ts";
-import { $, api, copyBtn, loadError, html, igLink, mvr, raw, type Raw, rememberOrder, render, store } from "./lib.ts";
-import { type MibSlip, parseMibSlip, parseSlip, type Slip } from "./parse.ts";
-import { qrPngUrl } from "./qr.ts";
+import { $, api, copyBtn, loadError, html, igLink, mvr, type Raw, rememberOrder, render, store } from "./lib.ts";
+import { busy, payBlock, type Payee, uploadBlock, wirePay } from "./pay.ts";
 import { notifyFor } from "./push.ts";
 import { track } from "./track.ts";
 
@@ -52,12 +50,16 @@ let view: View;
 let poll: number | undefined;
 let pollUntil = 0;
 
-// The slip being sent: uploaded path + what OCR read. Survives re-renders.
-// bank: a BML slip has a BLAZ reference; an MIB receipt doesn't, so the customer confirms its time and sender instead.
-const slip: {
-  path: string | null; preview: string | null; ocr: Slip | null; mib: MibSlip | null; bank: "bml" | "mib";
-  reading: boolean; uploading: boolean; error: string | null;
-} = { path: null, preview: null, ocr: null, mib: null, bank: "bml", reading: false, uploading: false, error: null };
+/** This order, for the shared pay and upload steps (pay.ts). */
+const payee = (): Payee => ({
+  id: view.public_id, amount: due(view), currency: view.currency, qr: view.qr, bank: view.bank, what: "your order",
+  uploadUrl: (content_type, size) => api("/slip-upload-url", { body: { t: token, content_type, size } }),
+  send: async (pay) => {
+    view = await api<View>("/submit-payment", { body: { t: token, ...pay } });
+    pollUntil = Date.now() + 10 * 60_000;
+  },
+  repaint: paint,
+});
 
 async function load(quiet = false) {
   try {
@@ -111,24 +113,24 @@ function paint() {
 
     ${v.pay_by ? html`<div class="notice warn small">Please pay by <b>${new Date(v.pay_by).toLocaleTimeString("en-GB", { timeZone: "Indian/Maldives", hour: "2-digit", minute: "2-digit" })}</b>.
       After that the order is cancelled and the buns go back on sale.</div>` : ""}
-    ${v.status === "awaiting_payment" && !v.on_hold && !v.cod && !v.credit ? payBlock(v) : ""}
+    ${v.status === "awaiting_payment" && !v.on_hold && !v.cod && !v.credit ? payBlock(payee()) : ""}
     ${v.can_cancel ? html`
       <div class="card">
         <p style="margin-top:0"><b>Need to change something?</b> You can change or cancel this order ${v.cod || v.credit ? "before we bring it" : "until you send your payment"}.</p>
         <div class="row"><button class="secondary" id="change">Change order</button><button class="secondary" id="cancel">Cancel order</button></div>
         <div id="cancel-err"></div>
       </div>` : ""}
-    ${v.late_upload ? html`<div class="card"><p><b>Already paid?</b> Upload the screenshot and we'll check it.</p>${uploadBlock(v)}</div>` : ""}
+    ${v.late_upload ? html`<div class="card"><p><b>Already paid?</b> Upload the screenshot and we'll check it.</p>${uploadBlock(payee())}</div>` : ""}
     ${v.on_hold ? html`
       <div class="card">
         <p><b>Please don't send the full amount again.</b> Message us first and we'll sort it out together.</p>
-        <details><summary>Upload a different screenshot</summary>${uploadBlock(v)}</details>
+        <details><summary>Upload a different screenshot</summary>${uploadBlock(payee())}</details>
       </div>` : ""}
     ${v.status === "awaiting_bank" ? html`
       <div class="card">
         <div class="kv"><span>Payment</span><b>${v.payment_reference}</b></div>
         <button class="secondary" id="check" style="width:100%;margin-top:var(--space-3)">Check again</button>
-        <details style="margin-top:var(--space-4)"><summary>Uploaded the wrong screenshot?</summary>${uploadBlock(v)}</details>
+        <details style="margin-top:var(--space-4)"><summary>Uploaded the wrong screenshot?</summary>${uploadBlock(payee())}</details>
       </div>` : ""}
 
     <div class="card">
@@ -166,110 +168,11 @@ function paint() {
 const due = (v: View) => v.currency === "USD" ? v.total_usd! : v.total_mvr;
 const money = (v: View, amount: string | number) => v.currency === "USD" ? `USD ${Number(amount).toFixed(2)}` : mvr(amount);
 
-function payBlock(v: View): Raw {
-  const b = v.bank!;
-  const usd = v.currency === "USD";
-  return html`
-    <div class="card">
-      <h2>How to pay</h2>
-      <ol class="steps">
-        <li>
-          ${v.qr ? html`
-            <p>Pay <b>${money(v, due(v))}</b> with the BML app. This QR code fills in our ${usd ? html`<b>USD</b> ` : ""}account and the amount for you, so nothing can be mistyped.</p>
-            <div class="paymv-pay">
-              <img class="paymv" src="${qrPngUrl(v.qr)}" alt="QR code to pay ${money(v, due(v))} to Alina Bun">
-              <button type="button" class="secondary" id="save-qr" data-track="save_qr">Save QR code</button>
-            </div>
-            <ol class="qr-steps">
-              <li>Tap <b>Save QR code</b> and save it to your photos. (Or press and hold the QR code and choose <b>Save to Photos</b>.)</li>
-              <li>Open the <b>BML app</b> and tap the scan button in the middle at the bottom.
-                <img src="/pay/bml-scan.jpg" alt="The BML app's bottom bar, with the scan button in the middle circled" width="460" height="90" loading="lazy"></li>
-              <li>Tap <b>Upload</b> at the bottom right, and pick the QR code from your photos.
-                <img src="/pay/bml-upload.jpg" alt="The BML app's scan screen, with Upload at the bottom right circled" width="460" height="110" loading="lazy"></li>
-              <li>Check the amount is <b>${due(v)}</b>, then send.</li>
-            </ol>
-            <p class="hint">Paying from another phone? Just scan the QR code on this screen with its BML app.</p>
-            <p style="margin-top:var(--space-4)"><b>Paying from MIB, or by hand?</b> Transfer ${money(v, due(v))} to ${usd ? html`our <b>USD</b> account` : "this account"}:</p>`
-          : html`<p>Transfer <b>${money(v, due(v))}</b> to ${usd ? html`our <b>USD</b> account` : "this account"}:</p>`}
-          <div class="kv"><span>Amount</span><b>${due(v)}</b>${copyBtn(due(v), "Copy", "copy_amount")}</div>
-          <div class="kv"><span>Bank</span><b>${b.bank}</b></div>
-          <div class="kv"><span>Account name</span><b>${b.account_name}</b>${copyBtn(b.account_name, "Copy", "copy_name")}</div>
-          <div class="kv"><span>Account number</span><b>${b.account_number}</b>${copyBtn(b.account_number, "Copy", "copy_account")}</div>
-        </li>
-        <li><p>Take a screenshot of the payment confirmation.</p></li>
-        <li><p>${usd ? "Upload the screenshot here. Please pay in USD from a BML account: we check payments from other banks by hand, so they take longer."
-          : "Upload the screenshot here. Paid from MIB? That works too."}</p>${uploadBlock(v)}</li>
-      </ol>
-    </div>`;
-}
-
-function uploadBlock(v: View): Raw {
-  const ocr = slip.ocr;
-  const warnings: string[] = [];
-  if (ocr?.currency && ocr.currency !== v.currency) {
-    warnings.push(`Your screenshot seems to show a payment in ${ocr.currency}, but this order is paid in ${v.currency}${v.currency === "USD" ? " (to our USD account)" : ""}.`);
-  } else if (ocr?.amount && Number(ocr.amount) !== Number(due(v))) {
-    warnings.push(`Your screenshot seems to show ${ocr.amount}, but your order is ${money(v, due(v))}.`);
-  }
-  const ours = v.bank?.account_number;
-  if (ocr?.toAccount && ours && ocr.toAccount !== ours) {
-    warnings.push(`Your screenshot seems to show a different account (${ocr.toAccount}). Ours is ${ours}.`);
-  }
-  return html`
-    <label class="upload">📷 ${slip.path ? "Choose a different screenshot" : "Upload screenshot"}
-      <input type="file" id="file" accept="image/*">
-    </label>
-    ${slip.uploading ? html`<p class="muted small">Uploading…</p>` : ""}
-    ${slip.error ? html`<div class="notice bad" style="margin-top:var(--space-3)">${slip.error}</div>` : ""}
-    ${slip.path ? html`
-      <div class="row" style="margin-top:var(--space-3);align-items:flex-start;flex-wrap:wrap">
-        ${slip.preview ? html`<img class="slip-preview" src="${slip.preview}" alt="Your screenshot">` : ""}
-        <div class="grow" style="min-width:min(100%, 230px)">
-          ${slip.bank === "mib" ? mibFields() : html`
-          <label for="ref" style="margin-top:0">Reference number</label>
-          <input id="ref" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="BLAZ…"
-            value="${ocr?.reference ?? (document.querySelector<HTMLInputElement>("#ref")?.value ?? "")}">
-          <div class="hint">${slip.reading ? "Reading your screenshot…" : raw("On your screenshot, next to <b>Reference</b>. It starts with BLAZ.")}</div>`}
-          <button type="button" class="copy" id="bank-switch" style="margin-top:var(--space-2)">${slip.bank === "mib" ? "Paid from BML instead?" : "Paid from MIB?"}</button>
-        </div>
-      </div>
-      ${warnings.map((w) => html`<div class="notice warn small" style="margin-top:var(--space-3)">${w} You can still send it; we check every payment with the bank.</div>`)}
-      <div id="send-err"></div>
-      <button class="primary" id="send" style="margin-top:var(--space-4)">Send payment</button>` : ""}
-  `;
-}
-
-/** MIB receipts have no BML reference: the bank is matched on when the money was sent and who sent it. */
-function mibFields(): Raw {
-  const m = slip.mib;
-  return html`
-    <p class="small" style="margin-top:0"><b>Paid from MIB.</b> Please check these match your receipt. We use them to find your payment.</p>
-    <label for="mib-at" style="margin-top:0">Date and time on the receipt</label>
-    <input id="mib-at" type="datetime-local" step="1" value="${m?.sentAt ?? ""}">
-    <label for="mib-name">Sender's name, as on the receipt</label>
-    <input id="mib-name" autocomplete="off" value="${m?.fromName ?? ""}" placeholder="e.g. Aisha N.">
-    <label for="mib-acct">Sender's account <span class="muted">(if the receipt shows it)</span></label>
-    <input id="mib-acct" inputmode="numeric" autocomplete="off" value="${m?.fromAccount ?? ""}" placeholder="9…">
-    ${slip.reading ? html`<div class="hint">Reading your screenshot…</div>` : ""}`;
-}
-
 function wire() {
-  // Keep what the customer types in the MIB fields across repaints.
-  for (const [sel, key] of [["#mib-at", "sentAt"], ["#mib-name", "fromName"], ["#mib-acct", "fromAccount"]] as const) {
-    const el = $<HTMLInputElement>(sel);
-    if (el) el.oninput = () => (slip.mib = { sentAt: null, fromName: null, fromAccount: null, ...slip.mib, [key]: el.value || null });
-  }
-  const save = $<HTMLButtonElement>("#save-qr");
-  if (save) save.onclick = () => saveQr($<HTMLImageElement>(".paymv-pay img").src, `alina-bun-${view.public_id}.png`);
-  const sw = $<HTMLButtonElement>("#bank-switch");
-  if (sw) sw.onclick = () => { slip.bank = slip.bank === "mib" ? "bml" : "mib"; paint(); };
+  wirePay(payee());
   const cancel = $<HTMLButtonElement>("#cancel"), change = $<HTMLButtonElement>("#change");
   if (cancel) cancel.onclick = () => cancelOrder(false);
   if (change) change.onclick = () => cancelOrder(true);
-  const file = $<HTMLInputElement>("#file");
-  if (file) file.onchange = () => file.files?.[0] && pick(file.files[0]);
-  const send = $<HTMLButtonElement>("#send");
-  if (send) send.onclick = submit;
   const check = $<HTMLButtonElement>("#check");
   if (check) {
     check.onclick = async () => {
@@ -286,22 +189,6 @@ function wire() {
       }
     };
   }
-}
-
-/**
- * Save the QR picture where the BML app's Upload can find it. iPhones: the share sheet's "Save Image" puts it in
- * Photos (a download would go to Files). Elsewhere a download, which Android's photo picker shows.
- */
-async function saveQr(png: string, name: string) {
-  const file = new File([await (await fetch(png)).blob()], name, { type: "image/png" });
-  if (/iPhone|iPad|iPod/.test(navigator.userAgent) && navigator.canShare?.({ files: [file] })) {
-    try {
-      return await navigator.share({ files: [file] });
-    } catch (e) {
-      if ((e as Error).name === "AbortError") return; // they closed the sheet
-    }
-  }
-  Object.assign(document.createElement("a"), { href: png, download: name }).click();
 }
 
 /** Cancel; for "change", the order form opens with the same buns, day and details filled in. */
@@ -327,81 +214,6 @@ async function cancelOrder(change: boolean) {
   }
 }
 
-async function pick(file: File) {
-  if (!file.type.startsWith("image/")) {
-    Object.assign(slip, { error: "Please choose a photo or screenshot." });
-    return paint();
-  }
-  if (slip.preview) URL.revokeObjectURL(slip.preview);
-  Object.assign(slip, { path: null, ocr: null, mib: null, bank: "bml", error: null, uploading: true, reading: true, preview: URL.createObjectURL(file) });
-  track("upload");
-  paint();
-  const blob = await compressImage(file);
-  // Upload and OCR run side by side; the customer can type the reference while OCR works.
-  readText(blob).then((t) => {
-    slip.ocr = parseSlip(t);
-    // An MIB receipt: switch to its fields, unless the customer already typed something there.
-    const mib = parseMibSlip(t, view.bank?.account_name);
-    if (mib && !slip.ocr.reference) {
-      slip.bank = "mib";
-      slip.mib ??= mib;
-    }
-  }).catch(() => {}).finally(() => {
-    slip.reading = false;
-    // Don't overwrite what the customer has typed in the meantime.
-    const typed = document.querySelector<HTMLInputElement>("#ref")?.value.trim();
-    if (typed && slip.ocr) slip.ocr.reference = typed;
-    paint();
-  });
-  try {
-    const type = blob.type || "image/jpeg";
-    const { path, upload_url } = await api<{ path: string; upload_url: string }>("/slip-upload-url", {
-      body: { t: token, content_type: type, size: blob.size },
-    });
-    await uploadTo(upload_url, blob.type ? blob : new Blob([blob], { type }));
-    slip.path = path;
-  } catch (e) {
-    slip.error = (e as Error).message;
-    track("blocked", { why: "upload", m: slip.error });
-  }
-  slip.uploading = false;
-  paint();
-}
-
-async function submit() {
-  const err = (m: string, code?: number) => {
-    track("blocked", { why: "pay", m, code });
-    render($("#send-err"), html`<div class="notice bad" style="margin-top:var(--space-3)">${m}</div>`);
-  };
-  let pay: Record<string, unknown>;
-  if (slip.bank === "mib") {
-    const at = $<HTMLInputElement>("#mib-at").value, name = $<HTMLInputElement>("#mib-name").value.trim();
-    const acct = $<HTMLInputElement>("#mib-acct").value.replace(/\s+/g, "");
-    if (!at) return err("Please enter the date and time on your receipt.");
-    if (!name && !acct) return err("Please enter the sender's name as it shows on your receipt.");
-    pay = { mib: { sent_at: at, ...(name ? { from_name: name } : {}), ...(acct ? { from_account: acct } : {}) } };
-  } else {
-    const reference = $<HTMLInputElement>("#ref").value.replace(/\s+/g, "").toUpperCase();
-    if (!/^BLAZ\d{12}$/.test(reference)) return err("Please check the reference number. It starts with BLAZ followed by 12 numbers.");
-    pay = { reference };
-  }
-  const btn = $<HTMLButtonElement>("#send");
-  btn.disabled = true;
-  btn.textContent = "Sending…";
-  try {
-    view = await api<View>("/submit-payment", { body: { t: token, path: slip.path, ...pay } });
-    track("send", { o: view.public_id, bank: slip.bank });
-    Object.assign(slip, { path: null, ocr: null, mib: null, bank: "bml", preview: null, error: null });
-    pollUntil = Date.now() + 10 * 60_000;
-    paint();
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  } catch (e) {
-    err((e as Error).message, (e as { status?: number }).status);
-    btn.disabled = false;
-    btn.textContent = "Send payment";
-  }
-}
-
 // While the bank sync runs (every ~5 min), re-read the order every 20 s for up to 10 minutes.
 function startPolling() {
   if (!pollUntil) pollUntil = Date.now() + 10 * 60_000;
@@ -409,7 +221,7 @@ function startPolling() {
   poll = setInterval(() => {
     if (Date.now() > pollUntil || document.hidden) return;
     // Don't repaint under someone choosing a new slip.
-    if (!slip.path && !slip.uploading) load(true);
+    if (!busy()) load(true);
   }, 20_000);
 }
 function stopPolling() {
