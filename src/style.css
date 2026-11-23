@@ -314,3 +314,26 @@ button.pk-put { min-height: 44px; padding: 8px 14px; flex: none; }
 /* The note for AI assistants at the end of the order page */
 .agent-note { margin: var(--space-6) 0 0; padding-top: var(--space-4); border-top: 1px solid var(--border); font-size: .8rem; color: var(--text-muted); }
 .agent-note a { color: inherit; }
+
+/* The order page's tracker: a dark-roast card whose step icons light up golden as the order moves along. */
+.trk { background: var(--bg-inverse); color: var(--text-inverse); border-radius: var(--radius-lg); padding: var(--space-5) var(--space-4) var(--space-4); margin-bottom: var(--space-4); box-shadow: var(--shadow-md); }
+.trk-head { text-align: center; }
+.trk-head b { font-family: var(--font-display); font-size: 1.2rem; font-weight: 600; display: block; }
+.trk-head div { color: var(--warm-glaze); font-size: .95rem; margin-top: var(--space-1); }
+.trk-steps { list-style: none; display: flex; align-items: center; justify-content: space-between; margin: var(--space-5) 0; padding: 0 var(--space-2); }
+.trk-steps li { display: flex; align-items: center; color: rgba(244, 238, 225, .35); flex: 1; }
+.trk-steps li:last-child { flex: 0; }
+.trk-steps li::after { content: ""; flex: 1; margin: 0 var(--space-2); border-top: 3px dotted rgba(244, 238, 225, .25); }
+.trk-steps li:last-child::after { display: none; }
+.trk-steps li.on { color: var(--golden-crust); }
+.trk-steps li.on:not(.now)::after { border-top-color: var(--golden-crust); }
+.trk-steps li.now svg { animation: trk-pulse 1.6s ease-in-out infinite; }
+@keyframes trk-pulse { 50% { transform: scale(1.15); } }
+@media (prefers-reduced-motion: reduce) { .trk-steps li.now svg { animation: none; } }
+.trk-steps svg { flex: none; }
+.trk-who { display: flex; align-items: center; gap: var(--space-3); border-top: 1px solid rgba(244, 238, 225, .15); padding-top: var(--space-4); }
+.trk-who img { border-radius: 50%; background: var(--milk-bun); padding: 4px; }
+.trk-who .small { color: var(--warm-glaze); }
+.trk-btn { width: 46px; height: 46px; border-radius: 50%; background: var(--milk-bun); color: var(--dark-roast); display: grid; place-items: center; flex: none; }
+.trk-btn:hover { background: var(--white); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

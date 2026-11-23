@@ -188,12 +188,13 @@ async function orders(p: URLSearchParams) {
   $("#next")?.addEventListener("click", () => go({ ...filters, page: String(page + 1) }));
 }
 
-// ── Pack: the day's orders as a kanban board. One lane per batch; columns New, Packing, Ready, Out for delivery, Delivered. ──
+// ── Pack: the day's orders as a kanban board. One lane per batch; columns New, Preparing, Packing, Out for delivery / Pickup, Delivered. ──
 
 type PackItem = { name: string; qty: number; free: boolean };
 type PackOrder = {
   public_id: string; customer_name: string; phone: string; paid: boolean;
-  stage: "new" | "packing" | "ready" | "out" | "delivered";
+  stage: "new" | "preparing" | "packing" | "ready" | "out" | "delivered";
+  eta: { from: string; to: string } | null; // the window the customer sees on their order page
   payment: "paid" | "free" | "checking" | "unpaid" | "cash" | "credit" | null; // null for cancelled ones
   cash_mvr: string | null; // cash on delivery: collect this
   cancelled: boolean; archived: boolean;
@@ -203,7 +204,7 @@ type PackOrder = {
   address: string | null; notes: string | null; items: PackItem[];
 };
 const LANES: [string, string, string][] = [["10:00", "☀️", "10 AM batch"], ["16:00", "🌇", "4 PM batch"]];
-const STAGES: [PackOrder["stage"], string][] = [["new", "New"], ["packing", "Packing"], ["ready", "Ready"], ["out", "Out for delivery"], ["delivered", "Delivered"]];
+const STAGES: [PackOrder["stage"], string][] = [["new", "New"], ["preparing", "Preparing"], ["packing", "Packing"], ["out", "Out for delivery / Pickup"], ["delivered", "Delivered"]];
 const PAY: Record<NonNullable<PackOrder["payment"]>, [string, string]> = {
   paid: ["✓ Paid", "ok"], free: ["🎁 Free", "free"], checking: ["Checking", "warn"], unpaid: ["Unpaid", "bad"], cash: ["💵 Cash", "warn"],
   credit: ["📒 Credit", "free"],
@@ -268,8 +269,9 @@ async function pack(date: string) {
     const todo = ids.filter((id) => orders?.find((o) => o.public_id === id)?.stage !== stage);
     if (!todo.length) return;
     if (stage === "delivered" && !confirm(`Mark ${plural(todo.length, "order")} delivered? Customers who ordered in Telegram get a message. This can't be undone.`)) return;
-    const deliveries = todo.filter((id) => orders?.find((o) => o.public_id === id)?.fulfilment === "delivery").length;
-    if (stage === "out" && deliveries && !confirm(`Tell ${plural(deliveries, "customer")} their order is out for delivery? Those with notifications on, or who ordered in Telegram, get a message.`)) return;
+    // Deliveries go out for delivery; pickups are ready to collect. Their customers are told.
+    if (stage === "out" && !confirm(`Tell ${plural(todo.length, "customer")} their order is out for delivery or ready for pickup? Those with notifications on, or who ordered in Telegram, get a message.`)) return;
+    // Preparing (and a pickup moved to Ready) also tells customers with notifications on; their order page shows it too.
     await doAct("/admin/pack-move", { ids: todo, stage });
   }
   const archive = (ids: string[], archived = true) => doAct("/admin/pack-archive", { ids, archived });
@@ -301,6 +303,7 @@ async function pack(date: string) {
           aria-pressed="${sel ? "true" : "false"}" draggable="${done || o.cancelled ? "false" : "true"}" data-id="${o.public_id}">
         <div class="pk-top"><b class="pk-name">${o.customer_name}</b><span class="pay ${tone}">${label}</span></div>
         <div class="small">${where}</div>
+        ${o.eta && !done ? html`<div class="small"><b>Promised ${o.eta.from}–${o.eta.to}</b></div>` : ""}
         <div class="small muted">${plural(bunCount([o]), "bun")}${items ? ` · ${items}` : ""}</div>
         <div class="small muted">${o.public_id}</div>
         ${o.cancelled ? html`<button class="pk-link" data-unpack="${o.public_id}">Unpacked ✓</button>` : ""}
@@ -886,6 +889,7 @@ async function days() {
       <label>Pickup address (shown to customers who pick up)<textarea name="pickup_place" maxlength="300">${st.pickup_place}</textarea></label>
       <label>Phone they call when they come<input name="pickup_phone" type="tel" value="${st.pickup_phone}"></label>
       <label>WhatsApp number for signup codes (open in WhatsApp Web with the codes extension)<input name="whatsapp_phone" type="tel" value="${st.whatsapp_phone ?? ""}"></label>
+      <label>Viber number (the Viber button on customers' order pages)<input name="viber_phone" type="tel" value="${st.viber_phone ?? ""}"></label>
       <label>Pickup location on the map</label>
       <p class="hint">Tap the map to put the pin. Customers get a link that opens it in Google Maps.</p>
       <div id="pickup-map" class="map" aria-label="Map: tap to put the pickup pin"></div>
@@ -940,6 +944,7 @@ async function days() {
         pickup_place: (f.elements.namedItem("pickup_place") as HTMLTextAreaElement).value,
         pickup_phone: (f.elements.namedItem("pickup_phone") as HTMLInputElement).value,
         ...((f.elements.namedItem("whatsapp_phone") as HTMLInputElement).value ? { whatsapp_phone: (f.elements.namedItem("whatsapp_phone") as HTMLInputElement).value } : {}),
+        ...((f.elements.namedItem("viber_phone") as HTMLInputElement).value ? { viber_phone: (f.elements.namedItem("viber_phone") as HTMLInputElement).value } : {}),
         ...(pickupPin ? { pickup_pin: pickupPin } : {}),
       });
       $("#settings-msg").textContent = "Saved.";

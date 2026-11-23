@@ -1,5 +1,5 @@
 // "/order/?t=<status token>" — the customer's receipt and payment page.
-import { $, api, copyBtn, loadError, html, igLink, mvr, type Raw, rememberOrder, render, store } from "./lib.ts";
+import { $, api, copyBtn, loadError, html, igLink, mvr, raw, type Raw, rememberOrder, render, store } from "./lib.ts";
 import { busy, payBlock, type Payee, uploadBlock, wirePay } from "./pay.ts";
 import { notifyFor } from "./push.ts";
 import { track } from "./track.ts";
@@ -25,6 +25,8 @@ interface View {
   cod?: boolean; // cash on delivery: no pay steps
   credit?: boolean; // on the account's credit: no pay steps, they pay what they owe later
   out_for_delivery?: boolean; // on its way (the Pack board's Out for delivery)
+  tracker?: Tracker | null; // where it is, from when the bakery starts it (store rules.ts tracker)
+  viber?: string | null; // viber:// link to the bakery
   bank: { bank: string; account_name: string; account_number: string } | null;
   qr: string | null;
   paid_amount: string | null;
@@ -42,6 +44,53 @@ interface View {
   pay_by: string | null;    // unpaid orders are cancelled after this
   late_upload: boolean;     // cancelled for not paying in time; a slip can still be sent
   can_cancel: boolean;      // unpaid and no slip sent: the customer can change or cancel
+}
+
+interface Tracker {
+  steps: string[]; step: number; starts_label: string | null;
+  eta: { from: string; to: string; at: string } | null; late: boolean;
+}
+
+// The tracker's step icons (24×24, drawn with currentColor): receipt, a steaming bowl, a scooter or a bag, a tick.
+const ICON: Record<string, string> = {
+  placed: `<path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6M9 16h3"/>`,
+  preparing: `<path d="M3 12h18a9 9 0 0 1-18 0z"/><path d="M8 8c0-1.5 1-1.5 1-3M12 8c0-1.5 1-1.5 1-3M16 8c0-1.5 1-1.5 1-3"/>`,
+  delivery: `<circle cx="5.5" cy="17.5" r="3.5"/><circle cx="18.5" cy="17.5" r="3.5"/><circle cx="15" cy="5" r="1"/><path d="M12 17.5V14l-3-3 4-3 2 3h2"/>`,
+  pickup: `<path d="M5 8h14l-1 13H6z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/>`,
+  done: `<circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/>`,
+};
+const svg = (name: string) => raw(`<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[name]}</svg>`);
+const IG_ICON = `<rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r=".8" fill="currentColor"/>`;
+const VIBER_ICON = `<path d="M12 3c5 0 8 2.5 8 7.5S17 18 12 18c-.8 0-1.6-.1-2.3-.2L6 21v-3.8C4.4 15.9 4 14 4 10.5 4 5.5 7 3 12 3z"/><path d="M9.5 8.5c.3 2.3 1.7 3.7 4 4l1-1 1.5 1-.5 1.2c-3.3.2-6.4-2.9-6.2-6.2l1.2-.5 1 1.5z"/>`;
+
+function trackerCard(v: View): Raw {
+  const t = v.tracker!;
+  const pickup = v.fulfilment === "pickup";
+  const title = t.step === 4 ? (pickup ? "Picked up. Enjoy your buns!" : "Delivered. Enjoy your buns!")
+    : t.starts_label ? `We'll start your order at ${t.starts_label}`
+    : t.eta ? `Estimated delivery ${t.eta.from} to ${t.eta.to}`
+    : t.late ? "Running a little late: it'll be on its way soon"
+    : pickup && t.step === 3 ? "Your order is ready for pickup"
+    : pickup ? `We're getting your order ready${v.time_label ? ` for ${v.time_label}` : ""}`
+    : "We're working on your order";
+  const sub = t.step === 4 ? "" : t.starts_label ? "We'll show the delivery time here then." : t.steps[t.step - 1];
+  const icons = ["placed", "preparing", pickup ? "pickup" : "delivery", "done"];
+  const contact = (href: string, label: string, icon: string, track: string) =>
+    html`<a class="trk-btn" href="${href}" target="_blank" rel="noopener" aria-label="${label}" data-track="${track}">${raw(`<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icon}</svg>`)}</a>`;
+  return html`
+    <div class="trk" aria-live="polite">
+      <div class="trk-head"><b>${title}</b>${sub ? html`<div>${sub}</div>` : ""}</div>
+      <ol class="trk-steps">
+        ${t.steps.map((label, i) => html`<li class="${i < t.step ? "on" : ""}${i === t.step - 1 && t.step < 4 ? " now" : ""}" title="${label}">
+          ${svg(icons[i])}<span class="sr">${label}${i < t.step ? " (done)" : ""}</span></li>`)}
+      </ol>
+      <div class="trk-who">
+        <img src="/favicon.svg" alt="" width="44" height="44">
+        <div class="grow"><b>Alina Bun</b><div class="small">Message us</div></div>
+        ${contact(igLink(v.instagram), "Message us on Instagram", IG_ICON, "contact_ig")}
+        ${v.viber ? contact(v.viber, "Message us on Viber", VIBER_ICON, "contact_viber") : ""}
+      </div>
+    </div>`;
 }
 
 const token = new URLSearchParams(location.search).get("t") ?? "";
@@ -106,7 +155,8 @@ function paint() {
       <p class="small muted" style="margin:var(--space-3) 0 0">Send us this order ID if you have any questions.</p>
     </div>
 
-    ${headline(v)}
+    ${v.tracker ? trackerCard(v) : headline(v)}
+    ${v.tracker && v.cod && v.status === "awaiting_payment" ? html`<div class="notice warn"><b>💵 Please have ${money(v, v.total_mvr)} in cash ready.</b></div>` : ""}
     ${v.message ? html`<div class="notice bad">${v.message}</div>` : ""}
     ${v.overpaid_mvr ? html`<div class="notice info">You sent ${money(v, v.paid_amount!)} and your order is ${money(v, due(v))}.
       We'll message you about the extra ${money(v, v.overpaid_mvr)}.</div>` : ""}
@@ -161,6 +211,7 @@ function paint() {
   `);
   wire();
   if (v.status === "awaiting_bank" && !v.checking_by_hand) startPolling();
+  else if (v.tracker && v.tracker.step < 4) startPolling(30_000, true); // follow the tracker while it moves
   else stopPolling();
 }
 
@@ -215,14 +266,14 @@ async function cancelOrder(change: boolean) {
 }
 
 // While the bank sync runs (every ~5 min), re-read the order every 20 s for up to 10 minutes.
-function startPolling() {
+function startPolling(every = 20_000, always = false) {
   if (!pollUntil) pollUntil = Date.now() + 10 * 60_000;
-  if (poll || Date.now() > pollUntil) return;
+  if (poll || (!always && Date.now() > pollUntil)) return;
   poll = setInterval(() => {
-    if (Date.now() > pollUntil || document.hidden) return;
+    if ((!always && Date.now() > pollUntil) || document.hidden) return;
     // Don't repaint under someone choosing a new slip.
     if (!busy()) load(true);
-  }, 20_000);
+  }, every);
 }
 function stopPolling() {
   clearInterval(poll);
