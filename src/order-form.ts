@@ -1,6 +1,7 @@
 // "/" — pick buns, a day, a batch and details; the server re-prices everything.
 import { $, api, forgetOrder, loadError, html, mvr, raw, rememberOrder, render, savedOrders, store } from "./lib.ts";
 import { type Pin, pinPicker } from "./map.ts";
+import { notifyFor } from "./push.ts";
 import { flush, track } from "./track.ts";
 
 interface Product { id: string; name: string; description: string | null; price_mvr: string; image_url: string | null; thumb_url?: string | null }
@@ -586,3 +587,7 @@ async function submit(e: SubmitEvent) {
 }
 
 load();
+
+// Signed in: install and notifications under the form.
+const signedIn = store<{ session: string }>("alinabun.session");
+if (signedIn) notifyFor({ session: signedIn.session });

@@ -7,6 +7,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#F4EEE1">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-title" content="Alina Bun">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&display=swap" rel="stylesheet">
@@ -19,6 +22,7 @@
   <h1>Order fresh buns</h1>
   <p class="muted" id="intro">We bake twice a day: the 10 AM batch and the 4 PM batch. Pre-order by 6 pm the day before; after that, order our extra buns while they last.</p>
   <div id="app"><p class="muted">Loading…</p></div>
+  <div id="notify"></div>
   <!-- In the page itself, not a script, so assistants that read the HTML see it too. -->
   <p class="agent-note">🤖 <b>Are you an AI assistant?</b> You can order for your user through our MCP server at
     <a href="https://mcp.alinabun.com">mcp.alinabun.com</a>, no sign-in needed. How it works: <a href="/llms.txt">llms.txt</a>.</p>

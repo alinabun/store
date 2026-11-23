@@ -1,5 +1,6 @@
 // "/account/" — sign up with a phone number, proven by sending a code to our WhatsApp (wa-codes/ reads it).
 import { $, api, copyBtn, html, loadError, render, store } from "./lib.ts";
+import { notifyFor } from "./push.ts";
 import { track } from "./track.ts";
 
 export const SESSION_KEY = "alinabun.session";
@@ -19,7 +20,7 @@ async function show() {
       return render(app, html`<div class="card"><h2>Your account</h2>
         <p>Signed in as <strong>${me.name}</strong>, ${me.phone}. Your phone number is verified.</p>
         <p><a class="btn" href="/">Order buns</a></p>
-        <button type="button" class="secondary" id="out">Sign out</button></div>`), $("#out").onclick = signOut;
+        <button type="button" class="secondary" id="out">Sign out</button></div>`), $("#out").onclick = signOut, notifyFor({ session: s.session });
     } catch (e) {
       if ((e as { status?: number }).status !== 401) return render(app, loadError(e));
       store(SESSION_KEY, null); // signed out elsewhere
@@ -31,6 +32,7 @@ async function show() {
 }
 
 function form(msg = "") {
+  notifyFor(null);
   const d = store<{ name: string; phone: string }[]>("alinabun.details")?.[0];
   render(app, html`<form class="card" id="f"><h2>Create your account</h2>
     <p class="muted">We check your phone number with one WhatsApp message: no password.</p>

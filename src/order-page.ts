@@ -3,6 +3,7 @@ import { compressImage, readText, uploadTo } from "./image.ts";
 import { $, api, copyBtn, loadError, html, igLink, mvr, raw, type Raw, rememberOrder, render, store } from "./lib.ts";
 import { type MibSlip, parseMibSlip, parseSlip, type Slip } from "./parse.ts";
 import { qrPngUrl } from "./qr.ts";
+import { notifyFor } from "./push.ts";
 import { track } from "./track.ts";
 
 interface View {
@@ -410,4 +411,4 @@ function stopPolling() {
 }
 
 if (!token) render(app, html`<div class="notice bad">This link is missing its order code. Please open the link you got when you ordered.</div>`);
-else load();
+else load(), notifyFor({ t: token });

@@ -588,6 +588,14 @@ async function orderDetail(id: string) {
       <p class="small">${o.fulfilment === "pickup" ? "Pickup" : "Delivery"} <b>${o.delivery_date}</b>${o.time_label ? html` at <b>${o.time_label}</b>` : ""}${o.bake_label ? ` · ${o.bake_label}` : ""} · ${copyBtn(o.status_url, "Copy customer's order link")}</p>
     </div>
     <div class="card">
+      <h2>🔔 Notifications</h2>
+      ${o.push_devices ? html`<form id="notify-form">
+        <p class="small">On for ${o.push_devices} phone${o.push_devices > 1 ? "s" : ""}. Tapping it opens their order page.</p>
+        <textarea name="message" maxlength="200" required placeholder="e.g. Your buns are on the way!"></textarea>
+        <div class="row" style="margin-top:var(--space-2)"><button>Send notification</button></div></form><div id="notify-err"></div>`
+        : html`<p class="muted small">This customer hasn't turned on notifications.</p>`}
+    </div>
+    <div class="card">
       <h2>Items</h2>
       <table class="items">
         ${o.items.map((i: Record<string, string>) => html`<tr><td>${i.qty} × ${i.product_name}</td><td>${Number(i.gift_no) ? "🎁 Free" : mvr(Number(i.unit_price) * Number(i.qty))}</td></tr>`)}
@@ -624,6 +632,16 @@ async function orderDetail(id: string) {
     </div>`);
   $("#back").onclick = () => history.length > 1 ? history.back() : go({});
   app.querySelectorAll<HTMLButtonElement>("[data-action]").forEach((b) => (b.onclick = () => act(o, b.dataset.action!)));
+  const nf = document.querySelector<HTMLFormElement>("#notify-form");
+  if (nf) nf.onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      await call("/admin/notify", { id: o.public_id, message: nf.message.value });
+      await orderDetail(o.public_id);
+    } catch (err) {
+      render($("#notify-err"), html`<div class="notice bad">${(err as Error).message}</div>`);
+    }
+  };
   const free = document.querySelector<HTMLFormElement>("#free");
   if (free) free.onsubmit = async (e) => {
     e.preventDefault();
@@ -1111,8 +1129,16 @@ async function invoiceView(number: string) {
 }
 
 async function customers(sort: string) {
-  const r = await call(`/admin/customers?sort=${sort}`);
+  const [r, p] = await Promise.all([call(`/admin/customers?sort=${sort}`), call("/admin/push")]);
   shell("customers", html`
+    <details class="card"><summary><b>🔔 Notifications on: ${p.customers.length}</b></summary>
+      <div class="scroll"><table class="list">
+        <tr><th>Name</th><th>Phone</th><th>Phones</th><th>Since</th><th>Latest order</th></tr>
+        ${p.customers.map((c: { name: string | null; phone: string; devices: string[]; verified: boolean; since: string; last_order: string | null }) => html`<tr>
+          <td>${c.name ?? "—"}${c.verified ? " ✓" : ""}</td><td>${c.phone}</td><td>${c.devices.join(", ")}</td><td>${when(c.since)}</td>
+          <td>${c.last_order ? html`<a href="?order=${c.last_order}">${c.last_order}</a>` : "—"}</td></tr>`)}
+      </table></div>
+      <p class="hint">✓ = account verified on WhatsApp. To send one, open their order and use Send notification.</p></details>
     <div class="filters"><label>Sort by<select id="sort">
       <option value="buns" ${sort === "buns" ? "selected" : ""}>Buns bought</option>
       <option value="recent" ${sort === "recent" ? "selected" : ""}>Last order</option></select></label></div>
