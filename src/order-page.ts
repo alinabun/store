@@ -1,6 +1,6 @@
 // "/order/?t=<status token>" — the customer's receipt and payment page.
 import { compressImage, readText, uploadTo } from "./image.ts";
-import { $, api, copyBtn, html, igLink, mvr, raw, type Raw, rememberOrder, render, store } from "./lib.ts";
+import { $, api, copyBtn, loadError, html, igLink, mvr, raw, type Raw, rememberOrder, render, store } from "./lib.ts";
 import { type MibSlip, parseMibSlip, parseSlip, type Slip } from "./parse.ts";
 import { qrPngUrl } from "./qr.ts";
 import { track } from "./track.ts";
@@ -63,7 +63,7 @@ async function load(quiet = false) {
     paint();
   } catch (e) {
     if (!quiet) track("order_view", { failed: (e as Error).message });
-    if (!quiet) render(app, html`<div class="notice bad">${(e as Error).message}</div>`);
+    if (!quiet) render(app, loadError(e));
   }
 }
 

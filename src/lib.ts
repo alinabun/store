@@ -5,6 +5,8 @@ export const FUNCTIONS_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/
 /** Instagram DM link for a handle (the handle comes from the server's settings). */
 export const igLink = (handle: string) => `https://ig.me/m/${encodeURIComponent(handle)}`;
 
+const offline = () => Object.assign(new Error("We can't reach the shop right now. Please check your internet and try again."), { offline: true });
+
 /** Calls the store function. Throws Error(message) with a human-readable message. */
 // deno-lint-ignore no-explicit-any
 export async function api<T = any>(path: string, opts: { method?: string; body?: unknown; token?: string } = {}): Promise<T> {
@@ -19,9 +21,10 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
       body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
     });
   } catch {
-    throw new Error("We can't reach the shop right now. Please check your internet and try again.");
+    throw offline();
   }
   const json = await res.json().catch(() => null);
+  if (json === null) throw offline(); // not our reply: something in between (a captive portal, an in-app browser) answered
   if (!res.ok) throw Object.assign(new Error(json?.error ?? "Something went wrong. Please try again."), { status: res.status });
   return json as T;
 }
@@ -67,6 +70,22 @@ document.addEventListener("click", async (e) => {
 /** `track` names the tap for the Visitors tab (pages with the tracker only). */
 export const copyBtn = (text: string, label = "Copy", track = "") =>
   html`<button type="button" class="copy" data-copy="${text}" data-track="${track}">${label}</button>`;
+
+/** A page that couldn't load: the error, and when the shop couldn't be reached at all (some Instagram/Messenger in-app
+ *  browsers block it), a way into the phone's own browser: Android can hand the link over, anyone can copy it. */
+export function loadError(e: unknown, retry = true): Raw {
+  const err = e as Error & { offline?: boolean };
+  const url = location.href;
+  const android = /Android/i.test(navigator.userAgent);
+  return html`<div class="notice bad">${err.message}</div>
+    ${err.offline ? html`<div class="notice info" style="margin-top:var(--space-3)">
+      <p style="margin:0 0 var(--space-2)"><b>Opened from Instagram or Messenger?</b> Their browser sometimes can't reach us. Please open this page in your phone's browser (Chrome or Safari): tap <b>⋮</b> or <b>···</b> at the top, then <b>Open in browser</b>. Or copy the link and paste it there.</p>
+      <p style="margin:0 0 var(--space-2);word-break:break-all"><b>${url}</b></p>
+      <div style="display:flex;gap:var(--space-2);flex-wrap:wrap"><button type="button" data-copy="${url}">Copy link</button>
+        ${android ? html`<a class="btn" href="${`intent://${location.host}${location.pathname}${location.search}${location.hash}#Intent;scheme=https;end`}">Open in browser</a>` : ""}</div>
+    </div>` : ""}
+    ${retry ? html`<button class="secondary" onclick="location.reload()" style="margin-top:var(--space-3)">Try again</button>` : ""}`;
+}
 
 export function store<T>(key: string, value?: T): T | null {
   try {

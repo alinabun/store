@@ -1,5 +1,5 @@
 // "/" — pick buns, a day, a batch and details; the server re-prices everything.
-import { $, api, forgetOrder, html, mvr, raw, rememberOrder, render, savedOrders, store } from "./lib.ts";
+import { $, api, forgetOrder, loadError, html, mvr, raw, rememberOrder, render, savedOrders, store } from "./lib.ts";
 import { type Pin, pinPicker } from "./map.ts";
 import { flush, track } from "./track.ts";
 
@@ -55,7 +55,7 @@ async function load() {
     });
   } catch (e) {
     track("menu", { failed: (e as Error).message });
-    render(app, html`<div class="notice bad">${(e as Error).message}</div><button onclick="location.reload()">Try again</button>`);
+    render(app, loadError(e));
     return;
   }
   const saved = savedDetails();
