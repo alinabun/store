@@ -32,6 +32,7 @@ let fee = 0; // laari; delivery fee for the current pin
 let boat: Vessel | null = null;
 let cutoff = "6 pm"; // from the server's cutoff hour
 let minDelivery = 0; // buns; delivery needs at least this many (from the server)
+let codMax = 0; // cash on delivery up to this many buns (from the server); 0 = not offered
 let usdRate = 0; // MVR per USD in hundredths (from the server); 0 = no USD option
 let pausedUntil: string | null = null; // "1 PM" while delivery is paused today (admin Days tab)
 // deno-lint-ignore no-explicit-any
@@ -45,6 +46,7 @@ async function load() {
     minDelivery = Number(r.delivery_min_buns ?? 0);
     pausedUntil = r.delivery_paused_until ?? null;
     usdRate = r.usd_rate ? Math.round(Number(r.usd_rate) * 100) : 0;
+    codMax = Number(r.cod_max_buns ?? 0);
     const hr = Number(r.cutoff_hour);
     cutoff = `${hr % 12 || 12} ${hr < 12 ? "am" : "pm"}`;
     $("#intro").textContent = `We bake twice a day: the 10 AM batch and the 4 PM batch. Pre-order by ${cutoff} the day before; after that, order our extra buns while they last.`;
@@ -159,8 +161,18 @@ async function load() {
         <textarea id="notes" name="notes" maxlength="500" placeholder="Anything we should know?"></textarea>
       </div>
 
-      ${usdRate ? html`
+      ${codMax ? html`
       <div class="card">
+        <h2>How will you pay?</h2>
+        <div class="dates" role="radiogroup" aria-label="How will you pay?">
+          <label><input type="radio" name="payment" value="bank" checked><span>Bank transfer</span></label>
+          <label><input type="radio" name="payment" value="cod"><span>💵 Cash on delivery</span></label>
+        </div>
+        <p class="hint" id="cod-hint">Cash on delivery is for orders of up to ${codMax} buns. Please have the cash ready when your buns arrive.</p>
+      </div>` : ""}
+
+      ${usdRate ? html`
+      <div class="card" id="cur-card">
         <h2>Pay in</h2>
         <div class="dates" role="radiogroup" aria-label="Pay in">
           <label><input type="radio" name="currency" value="MVR" checked><span>MVR</span></label>
@@ -171,7 +183,7 @@ async function load() {
 
       <div id="err" role="alert"></div>
       <button class="primary" id="submit">Place order</button>
-      <p class="hint" style="text-align:center">Next, you'll see how to pay by bank transfer.</p>
+      <p class="hint" style="text-align:center" id="next-hint">Next, you'll see how to pay by bank transfer.</p>
     </form>
     <div class="bar"><div class="wrap"><span id="sum">No buns yet</span><button type="button" class="secondary" id="go">Order ↓</button></div></div>
   `);
@@ -212,7 +224,7 @@ async function load() {
     if (name === "bake") { refreshBake(); track("day", { date: day()?.date, bake: batch()?.bake }); }
     if (name === "fulfilment") refreshFulfilment();
     if (name === "deliver_to") refreshDeliverTo();
-    if (name === "currency") update();
+    if (name === "currency" || name === "payment") update();
   });
   refreshDay();
   showSavedDetails();
@@ -517,13 +529,23 @@ function update() {
   const usd = currency() === "USD" ? ` = USD ${(Math.ceil(((laari + withFee) * 2) / usdRate) / 2).toFixed(2)}` : "";
   const bk = batch();
   $("#sum").textContent = buns ? `${buns} bun${buns > 1 ? "s" : ""} · ${mvr((laari + withFee) / 100)}${withFee ? " incl. delivery" : ""}${usd}${bk ? ` · ${bk.label}` : ""}` : "No buns yet";
+  // Cash on delivery only up to codMax buns, and always in MVR.
+  const cod = document.querySelector<HTMLInputElement>("input[name=payment][value=cod]");
+  if (cod) {
+    cod.disabled = buns > codMax;
+    if (cod.disabled && cod.checked) document.querySelector<HTMLInputElement>("input[name=payment][value=bank]")!.checked = true;
+  }
+  const curCard = document.querySelector<HTMLElement>("#cur-card");
+  if (curCard) curCard.hidden = payment() === "cod";
+  $("#next-hint").textContent = payment() === "cod" ? "You'll pay in cash when your buns arrive." : "Next, you'll see how to pay by bank transfer.";
   const hint = document.querySelector<HTMLElement>("#usd-hint");
   if (hint) hint.hidden = currency() !== "USD";
   if (fulfilment() === "delivery" && buns < minDelivery) $("#sum").textContent += ` · delivery is for ${minDelivery}+ buns`;
   showError("");
 }
 
-const currency = () => usdRate && document.querySelector<HTMLInputElement>("input[name=currency]:checked")?.value === "USD" ? "USD" : "MVR";
+const payment = () => codMax && document.querySelector<HTMLInputElement>("input[name=payment]:checked")?.value === "cod" ? "cod" : "bank";
+const currency = () => usdRate && payment() === "bank" && document.querySelector<HTMLInputElement>("input[name=currency]:checked")?.value === "USD" ? "USD" : "MVR";
 
 function showError(msg: string, why = "form", code?: number) {
   if (msg) track("blocked", { why, m: msg, code });
@@ -571,7 +593,7 @@ async function submit(e: SubmitEvent) {
   try {
     const r = await api<{ status_token: string; public_id: string }>("/create-order", {
       body: { name: get("name"), phone: get("phone"), fulfilment: fulfilment(), ...(fulfilment() === "delivery" && pin ? { lat: pin.lat, lng: pin.lng, address: get("address") || null } : {}),
-        ...(toBoat ? { vessel_id: boat!.id, boat_time: $<HTMLInputElement>("#boat-time").value } : { time }), notes: get("notes") || null, delivery_date: date.date, bake: bk.bake, items, currency: currency() },
+        ...(toBoat ? { vessel_id: boat!.id, boat_time: $<HTMLInputElement>("#boat-time").value } : { time }), notes: get("notes") || null, delivery_date: date.date, bake: bk.bake, items, currency: currency(), payment: payment() },
     });
     rememberDetails({ name: get("name"), phone: get("phone"), fulfilment: fulfilment(), deliverTo: deliverTo(), address: fulfilment() === "delivery" ? get("address") : "", pin: fulfilment() === "delivery" ? pin : null, boat: toBoat ? boat : null });
     rememberOrder(r.status_token, r.public_id);

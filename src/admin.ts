@@ -168,7 +168,7 @@ async function orders(p: URLSearchParams) {
           <td>${o.customer_name}<div class="small muted">${o.phone}</div></td>
           <td>${o.delivery_date}${o.bake_label ? html`<div class="small muted">${o.bake_label}</div>` : ""}</td>
           <td>${mvr(o.total_mvr)}<div class="small muted">${o.currency === "USD" ? `pays USD ${o.total_usd} · ` : ""}${o.total_buns} buns</div></td>
-          <td>${chip(o.status)} ${o.fulfilment === "pickup" ? html`<span class="chip">pickup</span>` : ""} ${o.entered_by ? html`<span class="chip">by us</span>` : ""} ${o.needs_review ? html`<span class="chip review">review</span>` : ""} ${String(o.on_telegram) === "false" ? html`<span class="chip review">not on Telegram</span>` : ""}</td>
+          <td>${chip(o.status)} ${o.fulfilment === "pickup" ? html`<span class="chip">pickup</span>` : ""} ${o.entered_by ? html`<span class="chip">by us</span>` : ""} ${o.cod ? html`<span class="chip">💵 cash</span>` : ""} ${o.needs_review ? html`<span class="chip review">review</span>` : ""} ${String(o.on_telegram) === "false" ? html`<span class="chip review">not on Telegram</span>` : ""}</td>
         </tr>`)}
     </table></div>
     ${r.orders.length ? "" : html`<p class="muted">No orders.</p>`}
@@ -194,7 +194,8 @@ type PackItem = { name: string; qty: number; free: boolean };
 type PackOrder = {
   public_id: string; customer_name: string; phone: string; paid: boolean;
   stage: "new" | "packing" | "ready" | "delivered";
-  payment: "paid" | "free" | "checking" | "unpaid" | null; // null for cancelled ones
+  payment: "paid" | "free" | "checking" | "unpaid" | "cash" | null; // null for cancelled ones
+  cash_mvr: string | null; // cash on delivery: collect this
   cancelled: boolean; archived: boolean;
   bake: string; bake_label: string;
   fulfilment: "delivery" | "pickup"; time: string | null; time_label: string;
@@ -204,7 +205,7 @@ type PackOrder = {
 const LANES: [string, string, string][] = [["10:00", "☀️", "10 AM batch"], ["16:00", "🌇", "4 PM batch"]];
 const STAGES: [PackOrder["stage"], string][] = [["new", "New"], ["packing", "Packing"], ["ready", "Ready"], ["delivered", "Delivered"]];
 const PAY: Record<NonNullable<PackOrder["payment"]>, [string, string]> = {
-  paid: ["✓ Paid", "ok"], free: ["🎁 Free", "free"], checking: ["Checking", "warn"], unpaid: ["Unpaid", "bad"],
+  paid: ["✓ Paid", "ok"], free: ["🎁 Free", "free"], checking: ["Checking", "warn"], unpaid: ["Unpaid", "bad"], cash: ["💵 Cash", "warn"],
 };
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const bunCount = (os: PackOrder[]) => os.reduce((n, o) => n + o.items.reduce((a, i) => a + i.qty, 0), 0);
@@ -288,7 +289,8 @@ async function pack(date: string) {
 
     const card = (o: PackOrder) => {
       const sel = selected.has(o.public_id), done = o.stage === "delivered";
-      const [label, tone] = o.cancelled ? ["Cancelled, unpack", "bad"] : PAY[o.payment ?? "unpaid"];
+      const [label, tone] = o.cancelled ? ["Cancelled, unpack", "bad"]
+        : o.payment === "cash" ? [`💵 Collect ${mvr(o.cash_mvr!)}`, "warn"] : PAY[o.payment ?? "unpaid"];
       const where = o.fulfilment === "pickup" ? (done ? "Picked up" : `Pickup ${o.time_label}`)
         : o.boat ? `Boat ${o.time_label} · ${o.boat}` : `${o.time_label} · ${o.area}`;
       const items = o.items.filter((i) => i.qty > 0).map((i) => `${i.name} ${i.qty}${i.free ? " free" : ""}`).join(", ");
@@ -452,7 +454,8 @@ async function newOrder() {
       <p class="hint deliv">Malé is ${mvr(dd.delivery_fee_male_mvr)}, outside Malé ${mvr(dd.delivery_fee_outside_male_mvr)}.</p>
       <label class="deliv">Where to deliver<textarea name="address" maxlength="500" placeholder="House, street, island; or the boat and time"></textarea></label>
       <label>Notes <span class="muted">(optional)</span><textarea name="notes" maxlength="500"></textarea></label>
-      <label class="row" style="margin-top:var(--space-4)"><input type="checkbox" name="free" style="width:auto"> Give away (free, no payment)</label>
+      <label class="row" style="margin-top:var(--space-4)" id="cod-row"><input type="checkbox" name="cod" style="width:auto"> 💵 Cash on delivery (collect when delivering)</label>
+      <label class="row" style="margin-top:var(--space-2)"><input type="checkbox" name="free" style="width:auto"> Give away (free, no payment)</label>
       <label id="why" hidden>Who is it for? <span class="muted">(kept in the order's history)</span><input name="free_reason" maxlength="300" placeholder="e.g. tasting for a café"></label>
       <div class="notice info" id="sum" style="margin-top:var(--space-4)"></div>
       <div id="no-err"></div>
@@ -476,11 +479,12 @@ async function newOrder() {
     render(f.time, html`<option value="">No set time</option>${times.map((t) => html`<option value="${t.value}">${t.label}</option>`)}`);
     f.time.value = times.some((t) => t.value === was) ? was : "";
     $("#why").hidden = !free;
+    $("#cod-row").hidden = free;
     f.querySelectorAll<HTMLElement>(".deliv").forEach((el) => (el.hidden = !deliv));
     const price = new Map((products as { id: string; price_mvr: string }[]).map((p) => [p.id, laari(p.price_mvr)]));
     const buns = items().reduce((a, i) => a + i.qty, 0);
     const total = free ? 0 : items().reduce((a, i) => a + (price.get(i.product_id) ?? 0) * i.qty, 0) + (deliv && buns ? laari(f.fee.value || "0") : 0);
-    render($("#sum"), html`${buns} buns · <b>${free ? "Free (giveaway)" : mvr(total / 100)}</b>${free ? "" : " · waits for payment until you mark it paid"}`);
+    render($("#sum"), html`${buns} buns · <b>${free ? "Free (giveaway)" : mvr(total / 100)}</b>${free ? "" : f.cod.checked ? " · 💵 collected in cash on delivery" : " · waits for payment until you mark it paid"}`);
   };
   f.addEventListener("input", refresh);
   f.addEventListener("change", refresh);
@@ -495,7 +499,7 @@ async function newOrder() {
       const r = await call("/admin/create-order", {
         name: (f.elements.namedItem("name") as HTMLInputElement).value, phone: f.phone.value, delivery_date: f.delivery_date.value, bake: f.bake.value, items: items(), fulfilment: f.fulfilment.value, time: f.time.value || null,
         ...(deliv ? { address: f.address.value || null, delivery_fee_mvr: f.fee.value } : {}),
-        notes: f.notes.value || null, ...(f.free.checked ? { free: true, free_reason: f.free_reason.value } : {}),
+        notes: f.notes.value || null, ...(f.free.checked ? { free: true, free_reason: f.free_reason.value } : f.cod.checked ? { cod: true } : {}),
       });
       go({ order: r.public_id });
     } catch (err) {
@@ -565,6 +569,8 @@ async function orderDetail(id: string) {
     ${o.needs_review ? html`<div class="notice bad"><b>Needs review:</b> ${o.review_reason}</div>` : ""}
     ${o.on_telegram === false ? html`<div class="notice bad small"><b>The slip isn't in the Telegram group yet.</b> Trying again every minute. Last error: ${o.telegram_error ?? "–"}</div>` : ""}
     ${o.customer_message ? html`<div class="notice info small">Customer sees: ${o.customer_message}</div>` : ""}
+    ${o.cod ? html`<div class="notice warn"><b>💵 Cash on delivery: collect ${mvr(o.total_mvr)}.</b>${o.status === "awaiting_payment"
+      ? " The buns are held; it doesn't expire. Moving it to Delivered on the Pack tab records the cash as paid." : ""}</div>` : ""}
     ${o.entered_by ? html`<div class="notice info small">Entered by ${o.entered_by}.${o.status === "awaiting_payment"
       ? " The buns are held until you mark it paid or cancel it; it doesn't expire. The customer can also pay with the link below." : ""}</div>` : ""}
     <div class="card">
@@ -838,6 +844,7 @@ async function days() {
         <label>Delivery fee in Malé (MVR)<input name="delivery_fee_male_mvr" inputmode="decimal" value="${st.delivery_fee_male_mvr}"></label>
         <label>Delivery fee outside Malé (MVR)<input name="delivery_fee_outside_male_mvr" inputmode="decimal" value="${st.delivery_fee_outside_male_mvr}"></label>
         <label>USD rate (MVR per USD; blank = no USD)<input name="usd_rate" inputmode="decimal" placeholder="e.g. 15.42" value="${st.usd_rate ?? ""}"></label>
+        <label>Cash on delivery: most buns per order (0 = off)<input name="cod_max_buns" type="number" min="0" step="1" value="${st.cod_max_buns}"></label>
       </div>
       <p class="hint">With a USD rate, customers can choose to pay in USD: the order total ÷ the rate, rounded up to the next 0.50, into the USD account. Changing it doesn't change orders already placed.</p>
       <label>Pickup address (shown to customers who pick up)<textarea name="pickup_place" maxlength="300">${st.pickup_place}</textarea></label>
@@ -889,7 +896,7 @@ async function days() {
     try {
       await call("/admin/config", {
         preorder_max_buns: n("preorder_max_buns"), delivery_max_orders: n("delivery_max_orders"), pay_within_minutes: n("pay_within_minutes"),
-        order_cutoff_hour: n("order_cutoff_hour"), instagram: (f.elements.namedItem("instagram") as HTMLInputElement).value,
+        order_cutoff_hour: n("order_cutoff_hour"), cod_max_buns: n("cod_max_buns"), instagram: (f.elements.namedItem("instagram") as HTMLInputElement).value,
         delivery_fee_male_mvr: (f.elements.namedItem("delivery_fee_male_mvr") as HTMLInputElement).value,
         delivery_fee_outside_male_mvr: (f.elements.namedItem("delivery_fee_outside_male_mvr") as HTMLInputElement).value,
         usd_rate: (f.elements.namedItem("usd_rate") as HTMLInputElement).value,

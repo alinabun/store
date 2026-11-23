@@ -23,6 +23,7 @@ interface View {
   payment_reference: string | null;
   checking_by_hand: boolean;
   on_hold: boolean;
+  cod?: boolean; // cash on delivery: no pay steps
   bank: { bank: string; account_name: string; account_number: string } | null;
   qr: string | null;
   paid_amount: string | null;
@@ -69,7 +70,10 @@ async function load(quiet = false) {
 
 function headline(v: View): Raw {
   switch (v.status) {
-    case "awaiting_payment": return html`<div class="notice warn"><b>Waiting for your payment</b></div>`;
+    case "awaiting_payment":
+      return v.cod
+        ? html`<div class="notice ok"><b>Order placed! 💵 Please have ${money(v, v.total_mvr)} in cash ready</b> when your buns ${v.fulfilment === "pickup" ? "are picked up" : "arrive"} on ${v.delivery_label}.</div>`
+        : html`<div class="notice warn"><b>Waiting for your payment</b></div>`;
     case "awaiting_bank":
       return v.checking_by_hand
         ? html`<div class="notice warn"><b>We're checking your payment by hand.</b> We'll update this page soon. No need to pay again.</div>`
@@ -99,10 +103,10 @@ function paint() {
 
     ${v.pay_by ? html`<div class="notice warn small">Please pay by <b>${new Date(v.pay_by).toLocaleTimeString("en-GB", { timeZone: "Indian/Maldives", hour: "2-digit", minute: "2-digit" })}</b>.
       After that the order is cancelled and the buns go back on sale.</div>` : ""}
-    ${v.status === "awaiting_payment" && !v.on_hold ? payBlock(v) : ""}
+    ${v.status === "awaiting_payment" && !v.on_hold && !v.cod ? payBlock(v) : ""}
     ${v.can_cancel ? html`
       <div class="card">
-        <p style="margin-top:0"><b>Need to change something?</b> You can change or cancel this order until you send your payment.</p>
+        <p style="margin-top:0"><b>Need to change something?</b> You can change or cancel this order ${v.cod ? "before we bring it" : "until you send your payment"}.</p>
         <div class="row"><button class="secondary" id="change">Change order</button><button class="secondary" id="cancel">Cancel order</button></div>
         <div id="cancel-err"></div>
       </div>` : ""}
