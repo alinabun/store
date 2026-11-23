@@ -147,8 +147,8 @@ async function load() {
           </div>
           <label id="pin-label">Where should we deliver?</label>
           <p class="hint" id="pin-hint">We deliver in Malé, Hulhulé and Hulhumalé. Tap the map to put a pin on your home. Drag the pin to move it. The blue dot is where you are now.</p>
+          <div class="notice warn small" id="pin-status" role="status">📍 Pin not placed yet. Tap the map to show us where to deliver.</div>
           <div id="map" class="map" aria-label="Map: tap to put your delivery pin"></div>
-          <div class="hint" id="pin-status">No pin yet.</div>
           <div class="hint" id="fee-status"></div>
 
           <label for="address">Directions <span class="muted">(optional)</span></label>
@@ -211,7 +211,7 @@ async function load() {
   });
   leaflet = pinPicker($("#map"), saved[0]?.pin ?? null, (p) => {
     pin = { lat: p.lat, lng: p.lng };
-    $("#pin-status").textContent = "📍 Pin placed. We'll call you when we're close.";
+    pinStatus("📍 Pin placed. We'll call you when we're close.", true);
     showError("");
     quoteFee();
   }).catch(() => render($("#map"), html`<div class="notice bad">The map didn't load. Please check your internet and refresh the page.</div>`));
@@ -307,7 +307,7 @@ function applyDetails(d: Details | null) {
   leaflet?.then((m: { setPin: (p: Pin | null) => void }) => m?.setPin(pin));
   fee = 0;
   $("#fee-status").textContent = "";
-  $("#pin-status").textContent = pin ? "Pin from your last order. Move it if you're somewhere else." : "No pin yet.";
+  pinStatus(pin ? "📍 Pin from your last order. Move it if you're somewhere else." : NO_PIN, !!pin);
   refreshFulfilment();
   refreshDeliverTo();
   if (pin) quoteFee();
@@ -522,6 +522,14 @@ function wireBoatSearch() {
       }
     }, 250);
   };
+}
+
+const NO_PIN = "📍 Pin not placed yet. Tap the map to show us where to deliver.";
+/** Above the map: a warning until there's a pin, so nobody misses that they need to tap the map. */
+function pinStatus(text: string, placed: boolean) {
+  const el = $("#pin-status");
+  el.className = `notice small ${placed ? "ok" : "warn"}`;
+  el.textContent = text;
 }
 
 function update() {
