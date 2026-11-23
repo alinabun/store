@@ -118,6 +118,7 @@ async function route() {
           case "profit": return await profit();
           case "costs": return await costs();
           case "expenses": return await expenses(p.get("from") ?? "", p.get("to") ?? "");
+          case "receipts": return p.get("id") ? await receiptView(Number(p.get("id"))) : await receipts(p.get("all") === "1");
           case "stock": return await stock(p.get("date") ?? "");
           case "demand": return await demand();
           case "customers": return await customerStats();
@@ -1413,7 +1414,7 @@ async function sales(date: string) {
 
 // ── Sales: inner tabs ──
 
-const SALES_VIEWS: [string, string][] = [["", "Overview"], ["profit", "Profit"], ["costs", "Costs"], ["expenses", "Expenses"], ["stock", "Stock"], ["demand", "Demand"], ["customers", "Customers"]];
+const SALES_VIEWS: [string, string][] = [["", "Overview"], ["profit", "Profit"], ["costs", "Costs"], ["expenses", "Expenses"], ["receipts", "Receipts"], ["stock", "Stock"], ["demand", "Demand"], ["customers", "Customers"]];
 /** The Sales tab's inner tabs, on top of every Sales view. */
 function salesShell(view: string, body: Raw) {
   shell("sales", html`<nav class="subtabs">${SALES_VIEWS.map(([k, l]) => html`<button class="${view === k ? "on" : ""}" data-view="${k}">${l}</button>`)}</nav>${body}`);
@@ -1617,6 +1618,141 @@ async function expenses(from: string, to: string) {
       }
     };
   });
+}
+
+// Receipts: going through what the Mac read off each photo
+
+interface CheckLine { name: string; qty: number; amount: number; ingredient: string | null; units: number | null; unit: string | null; per: string | null }
+interface CheckRow { id: number; date: string; shop: string | null; photo: boolean; note: string | null; amount: number | null; checked: boolean; issues: string[] }
+
+async function receipts(all: boolean) {
+  const r: { to_check: number; receipts: (CheckRow & { lines: number })[] } = await call(`/admin/receipts${all ? "?all=1" : ""}`);
+  const what = (x: CheckRow) => x.shop ?? (x.note ? (x.note.length > 40 ? `${x.note.slice(0, 40)}…` : x.note) : "Photo");
+  salesShell("receipts", html`
+    <div class="filters">
+      <button class="${all ? "secondary" : "primary"}" id="due" type="button">To check (${r.to_check})</button>
+      <button class="${all ? "primary" : "secondary"}" id="all" type="button">All</button>
+    </div>
+    <div class="card">
+      ${r.receipts.length ? html`<div class="scroll"><table class="list">
+        <tr><th>Day</th><th>What</th><th>Amount</th><th>Lines</th><th></th></tr>
+        ${r.receipts.map((x) => html`<tr data-open="${x.id}" tabindex="0" style="cursor:pointer"><td>${dayName(x.date)}</td><td>${what(x)}</td>
+          <td>${x.amount === null ? "–" : money(x.amount)}</td><td>${x.lines}</td>
+          <td>${x.checked ? html`<span class="chip paid">checked</span>` : x.issues.length ? html`<span class="chip review">${x.issues.length === 1 ? "1 problem" : `${x.issues.length} problems`}</span>` : html`<span class="small muted">not checked</span>`}</td></tr>`)}
+      </table></div>` : html`<p class="muted">${all ? "No receipts yet." : "Nothing to check: every receipt has been gone through."}</p>`}
+    </div>
+    <p class="small muted">To check: photos nobody has gone through yet, and typed notes whose lines look wrong. Open one to see the
+      photo beside what was read off it. Ingredient prices and stock come from these lines.</p>`);
+  $("#due").onclick = () => go({ tab: "sales", view: "receipts" });
+  $("#all").onclick = () => go({ tab: "sales", view: "receipts", all: "1" });
+  app.querySelectorAll<HTMLTableRowElement>("tr[data-open]").forEach((tr) => {
+    const open = () => go({ tab: "sales", view: "receipts", id: tr.dataset.open! });
+    tr.onclick = open;
+    tr.onkeydown = (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        open();
+      }
+    };
+  });
+}
+
+async function receiptView(id: number) {
+  const r: CheckRow & { lines: CheckLine[]; has_file: boolean; file: { type: string; data: string } | null; next: number | null } =
+    await call(`/admin/receipt?id=${id}`);
+  const src = r.file ? URL.createObjectURL(new Blob([Uint8Array.from(atob(r.file.data), (c) => c.charCodeAt(0))], { type: r.file.type })) : null;
+  const reading = (l: CheckLine) => l.ingredient
+    ? [l.ingredient, l.units === null ? "no size" : `${num(l.units)} ${l.unit === "pc" ? "pcs" : l.unit}`, l.per].filter(Boolean).join(" · ")
+    : "not an ingredient";
+  const lineRow = (l: { name: string; qty: number | string; amount: number | string }, read: string) => html`<tr data-line>
+    <td><input name="name" value="${l.name}" maxlength="120" required aria-label="Item" style="min-width:180px"></td>
+    <td><input name="qty" inputmode="decimal" value="${l.qty}" required aria-label="Quantity" style="max-width:80px"></td>
+    <td><input name="amount" inputmode="decimal" value="${l.amount}" required aria-label="Amount (MVR)" style="max-width:100px"></td>
+    <td class="small muted">${read}</td>
+    <td><button type="button" class="secondary" data-del aria-label="Remove this line">×</button></td></tr>`;
+  salesShell("receipts", html`
+    <button class="secondary" id="back" type="button">← Receipts</button>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:var(--space-4);margin-top:var(--space-4);align-items:start">
+      <div class="card">
+        <h3>${r.shop ?? "Receipt"} · ${dayName(r.date)}</h3>
+        <p>${r.amount === null ? html`<span class="chip review">no amount</span>` : html`<b>${money(r.amount)}</b>`}
+          ${r.checked ? html` <span class="chip paid">checked</span>` : ""}</p>
+        ${src ? r.file!.type === "application/pdf"
+          ? html`<p><a href="${src}" target="_blank" rel="noopener">Open the PDF</a></p>`
+          : html`<a href="${src}" target="_blank" rel="noopener"><img src="${src}" alt="The receipt photo" style="width:100%;max-height:80vh;object-fit:contain;border-radius:var(--radius-sm, 6px)"></a>
+            <p class="small muted">Tap the photo to open it full size.</p>`
+        : r.has_file ? html`<div class="notice bad">Couldn't load the photo from Telegram. Find it in the expenses chat.</div>` : ""}
+        ${r.note ? html`<p class="small">Typed: ${r.note}</p>` : ""}
+      </div>
+      <form class="card" id="lines">
+        <h3>What was read</h3>
+        ${r.issues.length ? html`<div class="notice bad">${r.issues.map((x) => html`<div>${x}</div>`)}</div>` : ""}
+        <div class="scroll"><table class="list">
+          <tr><th>Item</th><th>Qty</th><th>MVR</th><th>Counts as</th><th></th></tr>
+          <tbody id="rows">${r.lines.length ? r.lines.map((l) => lineRow(l, reading(l))) : lineRow({ name: "", qty: 1, amount: "" }, "")}</tbody>
+        </table></div>
+        <button type="button" class="secondary" id="add" style="margin-top:var(--space-3)">+ Add line</button>
+        <div class="notice info" id="sum" style="margin-top:var(--space-4)"></div>
+        <div id="err"></div>
+        <div class="row" style="flex-wrap:wrap;margin-top:var(--space-3)">
+          <button class="primary">Save lines</button>
+          ${r.checked
+            ? r.next ? html`<button type="button" class="secondary" id="next">Next receipt →</button>` : ""
+            : html`<button type="button" class="secondary" id="ok">Looks right${r.next ? " → next" : ""}</button>`}
+        </div>
+        <p class="hint">Put the pack size in the item name, as on the receipt: "Flour 1kg", "Milk 1L", "Eggs x30". Qty is how many packs.
+          The amount is the line's total before any tax at the bottom. Saving keeps the old reading and marks the receipt checked.
+          To change the receipt's amount, reply to the bot's message about it in the expenses chat.</p>
+      </form>
+    </div>`);
+
+  const f = $<HTMLFormElement>("#lines");
+  const read = () => [...f.querySelectorAll<HTMLTableRowElement>("tr[data-line]")].map((tr) => ({
+    name: tr.querySelector<HTMLInputElement>("[name=name]")!.value,
+    qty: Number(tr.querySelector<HTMLInputElement>("[name=qty]")!.value.replace(",", ".")),
+    amount: Number(tr.querySelector<HTMLInputElement>("[name=amount]")!.value.replace(",", ".")),
+  }));
+  const sum = () => {
+    const t = read().reduce((s, l) => s + (Number.isFinite(l.amount) ? l.amount : 0), 0);
+    render($("#sum"), html`Lines add up to <b>${money(Math.round(t * 100) / 100)}</b>${r.amount !== null ? html` · the receipt is ${money(r.amount)}` : ""}`);
+  };
+  const wire = () => f.querySelectorAll<HTMLButtonElement>("[data-del]").forEach((b) => (b.onclick = () => {
+    if (f.querySelectorAll("tr[data-line]").length > 1) b.closest("tr")!.remove();
+    sum();
+  }));
+  $("#add").onclick = () => {
+    $("#rows").insertAdjacentHTML("beforeend", lineRow({ name: "", qty: 1, amount: "" }, "").s);
+    wire();
+    sum();
+  };
+  f.addEventListener("input", sum);
+  wire();
+  sum();
+  const fail = (e: unknown) => render($("#err"), html`<div class="notice bad">${(e as Error).message}</div>`);
+  const next = () => r.next ? go({ tab: "sales", view: "receipts", id: String(r.next) }) : go({ tab: "sales", view: "receipts" });
+  $("#back").onclick = () => go({ tab: "sales", view: "receipts" });
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      await call("/admin/receipt-lines", { id, lines: read() });
+      await receiptView(id); // the new reading: what each line now counts as
+    } catch (err) {
+      fail(err);
+    }
+  };
+  const ok = document.querySelector<HTMLButtonElement>("#ok");
+  if (ok) {
+    ok.onclick = async () => {
+      try {
+        await call("/admin/receipt-check", { id });
+        next();
+      } catch (err) {
+        fail(err);
+      }
+    };
+  }
+  const nx = document.querySelector<HTMLButtonElement>("#next");
+  if (nx) nx.onclick = next;
 }
 
 // Stock
