@@ -1664,12 +1664,16 @@ async function receiptView(id: number) {
   const reading = (l: CheckLine) => l.ingredient
     ? [l.ingredient, l.units === null ? "no size" : `${num(l.units)} ${l.unit === "pc" ? "pcs" : l.unit}`, l.per].filter(Boolean).join(" · ")
     : "not an ingredient";
-  const lineRow = (l: { name: string; qty: number | string; amount: number | string }, read: string) => html`<tr data-line>
-    <td><input name="name" value="${l.name}" maxlength="120" required aria-label="Item" style="min-width:180px"></td>
-    <td><input name="qty" inputmode="decimal" value="${l.qty}" required aria-label="Quantity" style="max-width:80px"></td>
-    <td><input name="amount" inputmode="decimal" value="${l.amount}" required aria-label="Amount (MVR)" style="max-width:100px"></td>
-    <td class="small muted">${read}</td>
-    <td><button type="button" class="secondary" data-del aria-label="Remove this line">×</button></td></tr>`;
+  const lineRow = (l: { name: string; qty: number | string; amount: number | string }, read: string) => html`<div data-line
+    style="padding:var(--space-3) 0;border-bottom:1px solid var(--border)">
+    <input name="name" value="${l.name}" maxlength="120" required aria-label="Item" placeholder="Item, e.g. Flour 1kg" style="width:100%">
+    <div class="row" style="gap:var(--space-2);margin-top:var(--space-2);align-items:center">
+      <label class="small" style="flex:1;margin:0">Qty <input name="qty" inputmode="decimal" value="${l.qty}" required style="width:100%"></label>
+      <label class="small" style="flex:1.4;margin:0">MVR <input name="amount" inputmode="decimal" value="${l.amount}" required style="width:100%"></label>
+      <button type="button" class="secondary" data-del aria-label="Remove this line" style="align-self:flex-end">×</button>
+    </div>
+    ${read ? html`<div class="small muted" style="margin-top:var(--space-1)">Counts as: ${read}</div>` : ""}
+  </div>`;
   salesShell("receipts", html`
     <button class="secondary" id="back" type="button">← Receipts</button>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:var(--space-4);margin-top:var(--space-4);align-items:start">
@@ -1687,10 +1691,7 @@ async function receiptView(id: number) {
       <form class="card" id="lines">
         <h3>What was read</h3>
         ${r.issues.length ? html`<div class="notice bad">${r.issues.map((x) => html`<div>${x}</div>`)}</div>` : ""}
-        <div class="scroll"><table class="list">
-          <tr><th>Item</th><th>Qty</th><th>MVR</th><th>Counts as</th><th></th></tr>
-          <tbody id="rows">${r.lines.length ? r.lines.map((l) => lineRow(l, reading(l))) : lineRow({ name: "", qty: 1, amount: "" }, "")}</tbody>
-        </table></div>
+        <div id="rows">${r.lines.length ? r.lines.map((l) => lineRow(l, reading(l))) : lineRow({ name: "", qty: 1, amount: "" }, "")}</div>
         <button type="button" class="secondary" id="add" style="margin-top:var(--space-3)">+ Add line</button>
         <div class="notice info" id="sum" style="margin-top:var(--space-4)"></div>
         <div id="err"></div>
@@ -1707,7 +1708,7 @@ async function receiptView(id: number) {
     </div>`);
 
   const f = $<HTMLFormElement>("#lines");
-  const read = () => [...f.querySelectorAll<HTMLTableRowElement>("tr[data-line]")].map((tr) => ({
+  const read = () => [...f.querySelectorAll<HTMLDivElement>("[data-line]")].map((tr) => ({
     name: tr.querySelector<HTMLInputElement>("[name=name]")!.value,
     qty: Number(tr.querySelector<HTMLInputElement>("[name=qty]")!.value.replace(",", ".")),
     amount: Number(tr.querySelector<HTMLInputElement>("[name=amount]")!.value.replace(",", ".")),
@@ -1717,7 +1718,7 @@ async function receiptView(id: number) {
     render($("#sum"), html`Lines add up to <b>${money(Math.round(t * 100) / 100)}</b>${r.amount !== null ? html` · the receipt is ${money(r.amount)}` : ""}`);
   };
   const wire = () => f.querySelectorAll<HTMLButtonElement>("[data-del]").forEach((b) => (b.onclick = () => {
-    if (f.querySelectorAll("tr[data-line]").length > 1) b.closest("tr")!.remove();
+    if (f.querySelectorAll("[data-line]").length > 1) b.closest("[data-line]")!.remove();
     sum();
   }));
   $("#add").onclick = () => {
