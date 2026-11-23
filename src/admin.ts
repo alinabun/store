@@ -844,11 +844,11 @@ async function days() {
         <label>Delivery fee in Malé (MVR)<input name="delivery_fee_male_mvr" inputmode="decimal" value="${st.delivery_fee_male_mvr}"></label>
         <label>Delivery fee outside Malé (MVR)<input name="delivery_fee_outside_male_mvr" inputmode="decimal" value="${st.delivery_fee_outside_male_mvr}"></label>
         <label>USD rate (MVR per USD; blank = no USD)<input name="usd_rate" inputmode="decimal" placeholder="e.g. 15.42" value="${st.usd_rate ?? ""}"></label>
-        <label>Cash on delivery: most buns per order (0 = off)<input name="cod_max_buns" type="number" min="0" step="1" value="${st.cod_max_buns}"></label>
       </div>
       <p class="hint">With a USD rate, customers can choose to pay in USD: the order total ÷ the rate, rounded up to the next 0.50, into the USD account. Changing it doesn't change orders already placed.</p>
       <label>Pickup address (shown to customers who pick up)<textarea name="pickup_place" maxlength="300">${st.pickup_place}</textarea></label>
       <label>Phone they call when they come<input name="pickup_phone" type="tel" value="${st.pickup_phone}"></label>
+      <label>WhatsApp number for signup codes (open in WhatsApp Web with the codes extension)<input name="whatsapp_phone" type="tel" value="${st.whatsapp_phone ?? ""}"></label>
       <label>Pickup location on the map</label>
       <p class="hint">Tap the map to put the pin. Customers get a link that opens it in Google Maps.</p>
       <div id="pickup-map" class="map" aria-label="Map: tap to put the pickup pin"></div>
@@ -896,12 +896,13 @@ async function days() {
     try {
       await call("/admin/config", {
         preorder_max_buns: n("preorder_max_buns"), delivery_max_orders: n("delivery_max_orders"), pay_within_minutes: n("pay_within_minutes"),
-        order_cutoff_hour: n("order_cutoff_hour"), cod_max_buns: n("cod_max_buns"), instagram: (f.elements.namedItem("instagram") as HTMLInputElement).value,
+        order_cutoff_hour: n("order_cutoff_hour"), instagram: (f.elements.namedItem("instagram") as HTMLInputElement).value,
         delivery_fee_male_mvr: (f.elements.namedItem("delivery_fee_male_mvr") as HTMLInputElement).value,
         delivery_fee_outside_male_mvr: (f.elements.namedItem("delivery_fee_outside_male_mvr") as HTMLInputElement).value,
         usd_rate: (f.elements.namedItem("usd_rate") as HTMLInputElement).value,
         pickup_place: (f.elements.namedItem("pickup_place") as HTMLTextAreaElement).value,
         pickup_phone: (f.elements.namedItem("pickup_phone") as HTMLInputElement).value,
+        ...((f.elements.namedItem("whatsapp_phone") as HTMLInputElement).value ? { whatsapp_phone: (f.elements.namedItem("whatsapp_phone") as HTMLInputElement).value } : {}),
         ...(pickupPin ? { pickup_pin: pickupPin } : {}),
       });
       $("#settings-msg").textContent = "Saved.";

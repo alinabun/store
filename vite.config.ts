@@ -9,6 +9,7 @@ export default defineConfig({
         main: resolve(__dirname, "index.html"),
         order: resolve(__dirname, "order/index.html"),
         admin: resolve(__dirname, "admin/index.html"),
+        account: resolve(__dirname, "account/index.html"),
       },
     },
   },
