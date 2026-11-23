@@ -337,3 +337,9 @@ button.pk-put { min-height: 44px; padding: 8px 14px; flex: none; }
 .trk-btn { width: 46px; height: 46px; border-radius: 50%; background: var(--milk-bun); color: var(--dark-roast); display: grid; place-items: center; flex: none; }
 .trk-btn:hover { background: var(--white); }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* The notifications and install cards: room between a line of text and its button, and between steps. */
+#notify .card p + button, #notify .card p + .primary { margin-top: var(--space-2); }
+.install-steps { margin: var(--space-2) 0 0; padding-left: 1.4em; }
+.install-steps li { margin-bottom: var(--space-2); }
+.inline-ico { vertical-align: -3px; }
