@@ -36,6 +36,21 @@ let minDelivery = 0; // buns; delivery needs at least this many (from the server
 let usdRate = 0; // MVR per USD in hundredths (from the server); 0 = no USD option
 let pausedUntil: string | null = null; // "1 PM" while delivery is paused today (admin Days tab)
 const signedIn = store<{ session: string }>("alinabun.session");
+// Admin's "Start a test order" opens /?test=<pass>: this tab's orders are test orders (fake bank, 🧪 everywhere) until it
+// expires. Kept in this tab only, and taken out of the address so it isn't shared or bookmarked.
+const TEST_KEY = "alinabun.test";
+const testPass = (() => {
+  const q = new URLSearchParams(location.search).get("test");
+  try {
+    if (q) sessionStorage.setItem(TEST_KEY, q), history.replaceState(null, "", location.pathname);
+    const p = sessionStorage.getItem(TEST_KEY);
+    if (p && Number(p.split(".")[0]) > Date.now()) return p;
+    sessionStorage.removeItem(TEST_KEY);
+    return null;
+  } catch {
+    return q;
+  }
+})();
 // The signed-in account: cash on delivery and credit, when a manager turned them on for it.
 let acct: { phone: string; cod: boolean; credit: { limit_mvr: string; owed_mvr: string } | null } | null = null;
 // deno-lint-ignore no-explicit-any
@@ -45,7 +60,7 @@ async function load() {
   try {
     let r;
     let me;
-    [{ products }, r, me] = await Promise.all([api("/catalog"), api("/delivery-dates"),
+    [{ products }, r, me] = await Promise.all([api("/catalog"), api(testPass ? `/delivery-dates?test=${encodeURIComponent(testPass)}` : "/delivery-dates"),
       signedIn ? api<NonNullable<typeof acct>>("/account/me", { body: { session: signedIn.session } }).catch(() => null) : null]);
     acct = me?.cod || me?.credit ? me : null;
     ({ dates, today_date: today, pickup_place: pickupPlace, pickup_phone: pickupPhone, pickup_map_url: pickupMap } = r);
@@ -62,12 +77,15 @@ async function load() {
     });
   } catch (e) {
     track("menu", { failed: (e as Error).message });
+    if (testPass) try { sessionStorage.removeItem(TEST_KEY); } catch { /* blocked */ }
     render(app, loadError(e));
     return;
   }
   const saved = savedDetails();
   const firstOpen = dates.find((d) => d.available)?.date;
   render(app, html`
+    ${testPass ? html`<div class="notice warn">🧪 <b>Test mode.</b> Orders here are test orders: nothing is baked or delivered, and all buns show as available.
+      To pay, upload any picture and type the reference <b>BLAZ000000000000</b>. No money moves.</div>` : ""}
     ${pausedUntil ? html`<div class="notice warn">🛵 Delivery is paused until <b>${pausedUntil}</b> today. Today's deliveries go out after ${pausedUntil}.</div>` : ""}
     <div id="mine"></div>
     <form id="f" novalidate>
@@ -612,7 +630,7 @@ async function submit(e: SubmitEvent) {
     const r = await api<{ status_token: string; public_id: string }>("/create-order", {
       body: { name: get("name"), phone: get("phone"), fulfilment: fulfilment(), ...(fulfilment() === "delivery" && pin ? { lat: pin.lat, lng: pin.lng, address: get("address") || null } : {}),
         ...(toBoat ? { vessel_id: boat!.id, boat_time: $<HTMLInputElement>("#boat-time").value } : { time }), notes: get("notes") || null, delivery_date: date.date, bake: bk.bake, items, currency: currency(),
-        ...(payment() !== "bank" ? { payment: payment(), session: signedIn!.session } : {}) },
+        ...(payment() !== "bank" ? { payment: payment(), session: signedIn!.session } : {}), ...(testPass ? { test_pass: testPass } : {}) },
     });
     rememberDetails({ name: get("name"), phone: get("phone"), fulfilment: fulfilment(), deliverTo: deliverTo(), address: fulfilment() === "delivery" ? get("address") : "", pin: fulfilment() === "delivery" ? pin : null, boat: toBoat ? boat : null });
     rememberOrder(r.status_token, r.public_id);

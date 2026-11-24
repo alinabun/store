@@ -6,6 +6,7 @@ import { track } from "./track.ts";
 
 interface View {
   public_id: string;
+  test: boolean; // 🧪 a test order from admin
   status: "awaiting_payment" | "awaiting_bank" | "paid" | "delivered" | "cancelled" | "rejected";
   customer_name: string;
   phone: string;
@@ -148,6 +149,7 @@ function paint() {
   const v = view;
   const waiting = v.status === "awaiting_payment" || v.status === "awaiting_bank";
   render(app, html`
+    ${v.test ? html`<div class="notice warn">🧪 <b>Test order.</b> Not real: nothing is baked or delivered. Pay with any picture and the reference <b>BLAZ000000000000</b>; no money moves.</div>` : ""}
     <div class="card" style="text-align:center">
       <div class="muted small">Your order ID</div>
       <div class="order-id">${v.public_id}</div>

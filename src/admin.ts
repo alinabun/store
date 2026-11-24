@@ -151,7 +151,8 @@ async function orders(p: URLSearchParams) {
   shell("orders", html`
     <div class="row between" style="margin-bottom:var(--space-4)">
       <p class="muted" style="margin:0">Taking an order on Instagram or the phone, or giving buns away? Enter it here so the buns are held.</p>
-      <button id="new-order">New order</button>
+      <div class="row"><button class="secondary" id="test-order" title="Opens the store in test mode for 30 minutes: fake payment, 🧪 on Telegram, not counted">🧪 Start a test order</button>
+        <button id="new-order">New order</button></div>
     </div>
     <form class="filters" id="filters">
       <label>Search<input name="q" placeholder="AB-7K4Q or phone" value="${p.get("q") ?? ""}"></label>
@@ -169,7 +170,7 @@ async function orders(p: URLSearchParams) {
           <td>${o.customer_name}<div class="small muted">${o.phone}</div></td>
           <td>${o.delivery_date}${o.bake_label ? html`<div class="small muted">${o.bake_label}</div>` : ""}</td>
           <td>${mvr(o.total_mvr)}<div class="small muted">${o.currency === "USD" ? `pays USD ${o.total_usd} · ` : ""}${o.total_buns} buns</div></td>
-          <td>${chip(o.status)} ${o.fulfilment === "pickup" ? html`<span class="chip">pickup</span>` : ""} ${o.entered_by ? html`<span class="chip">by us</span>` : ""} ${o.cod ? html`<span class="chip">💵 cash</span>` : ""} ${o.credit ? html`<span class="chip">${o.given_away ? "🎁 given" : "📒 credit"}</span>` : ""} ${o.needs_review ? html`<span class="chip review">review</span>` : ""} ${String(o.on_telegram) === "false" ? html`<span class="chip review">not on Telegram</span>` : ""}</td>
+          <td>${chip(o.status)} ${o.fulfilment === "pickup" ? html`<span class="chip">pickup</span>` : ""} ${o.entered_by ? html`<span class="chip">by us</span>` : ""} ${o.cod ? html`<span class="chip">💵 cash</span>` : ""} ${o.test ? html`<span class="chip review">🧪 test</span>` : ""} ${o.credit ? html`<span class="chip">${o.given_away ? "🎁 given" : "📒 credit"}</span>` : ""} ${o.needs_review ? html`<span class="chip review">review</span>` : ""} ${String(o.on_telegram) === "false" ? html`<span class="chip review">not on Telegram</span>` : ""}</td>
         </tr>`)}
     </table></div>
     ${r.orders.length ? "" : html`<p class="muted">No orders.</p>`}
@@ -184,6 +185,18 @@ async function orders(p: URLSearchParams) {
     go({ tab: "orders", q: String(f.get("q") ?? ""), status: String(f.get("status") ?? ""), date: String(f.get("date") ?? ""), review: String(f.get("review") ?? "") });
   };
   $("#new-order").onclick = () => go({ tab: "orders", new: "1" });
+  // The store in test mode, in a new tab: opened before the request so phones don't block it as a pop-up.
+  $("#test-order").onclick = async () => {
+    const w = window.open("", "_blank");
+    try {
+      const r = await call<{ url: string }>("/admin/test-pass", {});
+      if (w) w.location.href = r.url;
+      else location.href = r.url;
+    } catch (e) {
+      w?.close();
+      alert((e as Error).message);
+    }
+  };
   app.querySelectorAll<HTMLElement>("tr[data-id]").forEach((tr) => (tr.onclick = () => go({ order: tr.dataset.id! })));
   $("#prev")?.addEventListener("click", () => go({ ...filters, page: String(page - 1) }));
   $("#next")?.addEventListener("click", () => go({ ...filters, page: String(page + 1) }));
@@ -203,6 +216,7 @@ type PackOrder = {
   fulfilment: "delivery" | "pickup"; time: string | null; time_label: string;
   area: "Malé" | "Hulhumalé" | "Other" | "Boat" | "Pickup"; boat: string | null;
   address: string | null; notes: string | null; items: PackItem[];
+  test: boolean; // 🧪 not real: don't bake or deliver
 };
 const LANES: [string, string, string][] = [["10:00", "☀️", "10 AM batch"], ["16:00", "🌇", "4 PM batch"]];
 const STAGES: [PackOrder["stage"], string][] = [["new", "New"], ["preparing", "Preparing"], ["packing", "Packing"], ["out", "Out for delivery / Pickup"], ["delivered", "Delivered"]];
@@ -303,6 +317,7 @@ async function pack(date: string) {
       return html`<div class="pk-card${sel ? " on" : ""}${o.cancelled ? " cancelled" : ""}" role="button" tabindex="0"
           aria-pressed="${sel ? "true" : "false"}" draggable="${done || o.cancelled ? "false" : "true"}" data-id="${o.public_id}">
         <div class="pk-top"><b class="pk-name">${o.customer_name}</b><span class="pay ${tone}">${label}</span></div>
+        ${o.test ? html`<div class="small"><span class="chip review">🧪 Test, not real</span></div>` : ""}
         <div class="small">${where}</div>
         ${o.eta && !done ? html`<div class="small"><b>Promised ${o.eta.from}–${o.eta.to}</b></div>` : ""}
         <div class="small muted">${plural(bunCount([o]), "bun")}${items ? ` · ${items}` : ""}</div>
@@ -573,6 +588,7 @@ async function orderDetail(id: string) {
   shell("orders", html`
     <button class="secondary" id="back">← Orders</button>
     <h1 style="margin-top:var(--space-4)">${o.public_id} ${chip(o.status)}</h1>
+    ${o.test ? html`<div class="notice warn"><b>🧪 Test order.</b> Paid by the fake bank; not real, don't bake or deliver. Not counted in stock or Sales.</div>` : ""}
     ${o.needs_review ? html`<div class="notice bad"><b>Needs review:</b> ${o.review_reason}</div>` : ""}
     ${o.on_telegram === false ? html`<div class="notice bad small"><b>The slip isn't in the Telegram group yet.</b> Trying again every minute. Last error: ${o.telegram_error ?? "–"}</div>` : ""}
     ${o.customer_message ? html`<div class="notice info small">Customer sees: ${o.customer_message}</div>` : ""}
