@@ -2126,6 +2126,7 @@ async function products() {
       <label>Description<input name="description" value="${p.description ?? ""}"></label>
       <div class="row" style="margin-top:var(--space-3)">
         <label class="row" style="margin:0"><input type="checkbox" name="active" style="width:auto" ${p.active !== false ? "checked" : ""}> On sale</label>
+        <label class="row" style="margin:0"><input type="checkbox" name="is_new" style="width:auto" ${p.is_new ? "checked" : ""}> "New" badge</label>
         <label style="margin:0" class="grow">Photo <input type="file" name="photo" accept="image/jpeg,image/png,image/webp"></label>
         <button>Save</button>
       </div>
@@ -2150,7 +2151,7 @@ async function saveProduct(e: Event, f: HTMLFormElement) {
     }
     await call("/admin/product", {
       id, name: d.get("name"), price_mvr: d.get("price_mvr"), description: d.get("description"),
-      sort_order: Number(d.get("sort_order")), preorder_max: Number(d.get("preorder_max")), active: d.get("active") === "on", ...(image_path ? { image_path } : {}),
+      sort_order: Number(d.get("sort_order")), preorder_max: Number(d.get("preorder_max")), active: d.get("active") === "on", is_new: d.get("is_new") === "on", ...(image_path ? { image_path } : {}),
     });
     msg("Saved.", true);
     setTimeout(products, 600);

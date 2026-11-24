@@ -87,6 +87,10 @@ h2.sub { margin-top: var(--space-4); }
 .bun:first-child { border-top: 0; }
 .bun.on { background: rgba(189, 129, 69, .08); }
 .bun.on::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--golden-crust); border-radius: 0 3px 3px 0; }
+/* A new bun: outlined in golden crust with a warm tint, and a "New" pill by its name. */
+.bun.new { margin: var(--space-1) 0; border: 2px solid var(--golden-crust); border-radius: var(--radius-md); background: rgba(189, 129, 69, .1); }
+.bun.new + .bun { border-top: 0; }
+.new-badge { display: inline-block; vertical-align: 2px; margin-left: 4px; padding: 2px 8px; border-radius: var(--radius-pill); background: var(--dark-roast); color: var(--milk-bun); font-family: var(--font-body); font-size: .7rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .bun-photo { position: relative; width: 72px; height: 72px; border-radius: var(--radius-md); overflow: hidden; background: var(--surface); }
 .bun-photo img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .bun-photo::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--border); pointer-events: none; }

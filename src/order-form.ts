@@ -4,7 +4,7 @@ import { type Pin, pinPicker } from "./map.ts";
 import { notifyFor } from "./push.ts";
 import { flush, track } from "./track.ts";
 
-interface Product { id: string; name: string; description: string | null; price_mvr: string; image_url: string | null; thumb_url?: string | null }
+interface Product { id: string; name: string; description: string | null; price_mvr: string; image_url: string | null; thumb_url?: string | null; is_new?: boolean }
 interface TimeOption { value: string; label: string }
 /** One of a day's two batches (10 AM, 4 PM). Its stock and times are the ones that count. */
 interface Bake {
@@ -108,12 +108,12 @@ async function load() {
         <p class="hint">Prices per bun.${minDelivery ? ` Delivery from ${minDelivery} ${minDelivery === 1 ? "bun" : "buns"}.` : ""}</p>
         <div class="menu">
         ${products.map((p, i) => html`
-          <div class="bun" id="row-${p.id}">
+          <div class="bun${p.is_new ? " new" : ""}" id="row-${p.id}">
             <div class="bun-photo">${p.thumb_url || p.image_url
               ? html`<img src="${p.thumb_url || p.image_url}" alt="${p.name} bun" width="72" height="72" decoding="async" ${i < 2 ? "" : raw('loading="lazy"')}>`
               : html`<span class="bun-ph" aria-hidden="true">🥯</span>`}</div>
             <div class="bun-body">
-              <h3>${p.name}</h3>
+              <h3>${p.name}${p.is_new ? html` <span class="new-badge">New</span>` : ""}</h3>
               ${p.description ? html`<p class="bun-desc">${p.description}</p>` : ""}
               <div class="bun-meta"><b>MVR ${Number(p.price_mvr) % 1 ? Number(p.price_mvr).toFixed(2) : Number(p.price_mvr)}</b><span class="stock" id="left-${p.id}" hidden></span></div>
             </div>
